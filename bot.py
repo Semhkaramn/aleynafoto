@@ -358,7 +358,75 @@ async def owner_commands(event):
         msg += f"✉️ Mesaj Taslağı: **{len(templates)}**\n"
         msg += f"✅ Aktif Taslak: {'✅ Var' if active_tpl else '❌ Yok'}\n"
         msg += f"🚫 Yasak Kelime: **{len(banned)}**\n"
-        msg += f"🤖 Bot: ✅ Çalışıyor\n"
+        msg += f"🤖 Bot: ✅ Çalışıyor\n\n"
+
+        msg += "📈 **İstatistikler:**\n"
+        msg += f"📨 Toplam Mesaj: {stats['total_messages']}\n"
+        msg += f"📷 Algılanan Foto: {stats['photos_detected']}\n"
+        msg += f"✅ Gönderilen Foto: {stats['photos_sent']}\n"
+        msg += f"🚫 Engellenen Foto: {stats['photos_blocked']}\n"
+
+        if stats['last_activity']:
+            time_diff = datetime.now() - stats['last_activity']
+            msg += f"\n🕐 Son Aktivite: {time_diff.seconds} saniye önce"
+
+        await event.reply(msg, parse_mode="markdown")
+        return
+
+    # LOG KOMUTU
+    if text_lower in ["log", "loglar", "logs"]:
+        msg = "📋 **Son Aktivite Logları**\n\n"
+        msg += "Heroku loglarını görmek için:\n"
+        msg += "```\nheroku logs --tail -a [uygulama-adı]\n```\n\n"
+        msg += f"📊 **Anlık Durum:**\n"
+        msg += f"• Toplam mesaj: {stats['total_messages']}\n"
+        msg += f"• Foto algılandı: {stats['photos_detected']}\n"
+        msg += f"• Foto gönderildi: {stats['photos_sent']}\n"
+        msg += f"• Foto engellendi: {stats['photos_blocked']}\n"
+
+        await event.reply(msg, parse_mode="markdown")
+        return
+
+    # TEST KOMUTU
+    if text_lower in ["test", "test et"]:
+        channels = await get_channels()
+        target_str = await get_setting("target_channel_id")
+        active_tpl = await get_active_template_content()
+
+        msg = "🧪 **Sistem Test Raporu**\n\n"
+
+        # Kanal kontrolü
+        if not channels:
+            msg += "❌ **Dinlenen kanal yok!**\n"
+            msg += "   → `kanal ekle` komutu ile kanal ekle\n\n"
+        else:
+            msg += f"✅ {len(channels)} kanal dinleniyor\n"
+            for c in channels:
+                msg += f"   • `{c['id']}` - {c['title']}\n"
+            msg += "\n"
+
+        # Hedef kontrolü
+        if not target_str:
+            msg += "❌ **Hedef kanal yok!**\n"
+            msg += "   → `hedef ayarla` komutu ile hedef kanal ayarla\n\n"
+        else:
+            msg += f"✅ Hedef kanal: `{target_str}`\n\n"
+
+        # Taslak kontrolü
+        if not active_tpl:
+            msg += "⚠️ **Aktif taslak yok!**\n"
+            msg += "   → Varsayılan mesaj kullanılacak\n"
+            msg += "   → `taslak ekle` ile taslak oluşturabilirsin\n\n"
+        else:
+            msg += f"✅ Aktif taslak mevcut\n\n"
+
+        # Sonuç
+        if channels and target_str:
+            msg += "🎉 **Sistem hazır!**\n"
+            msg += "Dinlenen kanallara fotoğraf geldiğinde otomatik olarak hedef kanala gönderilecek.\n"
+        else:
+            msg += "⚠️ **Sistem henüz hazır değil!**\n"
+            msg += "Yukarıdaki eksikleri tamamla.\n"
 
         await event.reply(msg, parse_mode="markdown")
         return
@@ -713,7 +781,19 @@ async def handle_state(event, state):
 
 
 ########################################
-# FOTOĞRAF DİNLEYİCİ - İYİLEŞTİRİLMİŞ
+# İSTATİSTİKLER
+########################################
+
+stats = {
+    "total_messages": 0,
+    "photos_detected": 0,
+    "photos_sent": 0,
+    "photos_blocked": 0,
+    "last_activity": None
+}
+
+########################################
+# FOTOĞRAF DİNLEYİCİ - DETAYLI LOG
 ########################################
 
 @client.on(events.NewMessage)
@@ -722,57 +802,86 @@ async def photo_listener(event):
     if event.is_private and event.sender_id == OWNER_ID:
         return
 
+    # Tüm mesajları say
+    stats["total_messages"] += 1
+    stats["last_activity"] = datetime.now()
+
     # Dinlenen kanallar
     channels = await get_channels()
     channel_ids = {c["id"] for c in channels}
 
+    # Log: Mesaj hangi kanaldan geldi
+    log(f"📨 Mesaj geldi: Chat ID={event.chat_id} | Mesaj ID={event.id}")
+
+    # Kanal kontrolü
     if event.chat_id not in channel_ids:
+        log(f"⏭️ ATLANDI: {event.chat_id} dinlenen kanallarda yok", "DEBUG")
         return
+
+    log(f"✅ KANAL DOĞRU: {event.chat_id} dinleniyor", "INFO")
 
     # FOTOĞRAF ÇIKART
     photo = extract_photo_from_message(event.message)
 
     if not photo:
-        if DEBUG:
-            log(f"Mesaj fotoğraf içermiyor (chat: {event.chat_id})", "DEBUG")
+        log(f"❌ FOTO YOK: Chat {event.chat_id} | Mesaj tipi: {type(event.message.media)}", "WARN")
         return
 
-    log(f"Fotoğraf algılandı: {event.chat_id} (msg: {event.id})")
+    stats["photos_detected"] += 1
+    log(f"📷 FOTOĞRAF ALGILANDI: Chat {event.chat_id} | Mesaj {event.id}", "INFO")
 
     # YASAK KELİME KONTROLÜ
     caption = (event.message.message or "").lower()
     banned = await get_banned_words()
 
+    log(f"🔍 Yasak kelime kontrolü: {len(banned)} kelime listede", "DEBUG")
+
     for word in banned:
         if word and word.lower() in caption:
-            log(f"ENGELLENDI - Yasak kelime: '{word}' | Chat: {event.chat_id}")
+            stats["photos_blocked"] += 1
+            log(f"🚫 ENGELLENDI: Yasak kelime '{word}' bulundu | Chat: {event.chat_id}", "WARN")
             return
+
+    log(f"✅ YASAK KELİME YOK: Caption temiz", "DEBUG")
 
     # HEDEF KANAL KONTROLÜ
     target_str = await get_setting("target_channel_id")
     if not target_str:
-        log("UYARI: Hedef kanal ayarlanmamış!", "WARN")
+        log("⚠️ HEDEF KANAL YOK: Lütfen 'hedef ayarla' komutu ile hedef kanal belirle!", "ERROR")
         return
 
     target_id = int(target_str)
+    log(f"🎯 Hedef kanal: {target_id}", "DEBUG")
 
     # AKTİF TASLAK
     template = await get_active_template_content()
     if not template:
         template = "📸 Yeni fotoğraf"
-        log("UYARI: Aktif taslak yok, varsayılan mesaj kullanılıyor", "WARN")
+        log("⚠️ Aktif taslak yok, varsayılan mesaj kullanılıyor", "WARN")
+    else:
+        log(f"✉️ Taslak kullanılıyor: {template[:30]}...", "DEBUG")
 
     # GÖNDER
     try:
+        log(f"📤 GÖNDERİLİYOR: {event.chat_id} → {target_id}", "INFO")
+
         await client.send_file(
             target_id,
             file=photo,
             caption=template,
             parse_mode="html"
         )
-        log(f"✓ GÖNDERILDI: {event.chat_id} → {target_id}")
+
+        stats["photos_sent"] += 1
+        log(f"✅ BAŞARIYLA GÖNDERİLDİ: {event.chat_id} → {target_id} | Toplam: {stats['photos_sent']}", "INFO")
+        log("=" * 60, "INFO")
+
     except Exception as e:
-        log(f"HATA - Gönderilemedi: {e}", "ERROR")
+        log(f"❌ GÖNDERME HATASI: {e}", "ERROR")
+        log(f"   Hedef: {target_id}", "ERROR")
+        log(f"   Hata tipi: {type(e).__name__}", "ERROR")
+        import traceback
+        log(f"   Detay: {traceback.format_exc()}", "ERROR")
 
 
 ########################################

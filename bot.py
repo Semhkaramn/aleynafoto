@@ -636,12 +636,6 @@ async def owner_commands(event):
         await event.reply(msg, parse_mode="markdown")
         return
 
-    # Tanınmayan komut
-    await event.reply(
-        "❓ Komutu anlamadım.\n\n"
-        "`menü` yazarak tüm komutları görebilirsin."
-    )
-
 
 ########################################
 # STATE HANDLER

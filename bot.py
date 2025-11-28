@@ -33,6 +33,32 @@ def log(msg: str, level: str = "INFO"):
 
 
 ########################################
+# ID NORMALIZE FONKSİYONU
+########################################
+
+def normalize_channel_id(channel_id: int) -> int:
+    """
+    Telegram kanal ID'lerini normalize et.
+    Her zaman -100XXXXXXXXXX formatına çevir.
+    """
+    channel_id = int(channel_id)
+
+    # Zaten doğru formatta mı? (-100 ile başlıyor)
+    if str(channel_id).startswith("-100"):
+        return channel_id
+
+    # Pozitif ID ise -100 formatına çevir
+    if channel_id > 0:
+        return -1000000000000 - channel_id
+
+    # Negatif ama -100 ile başlamıyor
+    if channel_id < 0 and not str(channel_id).startswith("-100"):
+        return -1000000000000 - abs(channel_id)
+
+    return channel_id
+
+
+########################################
 # DB YARDIMCI FONKSİYONLAR
 ########################################
 
@@ -70,6 +96,9 @@ async def get_setting(key: str):
 ########################################
 
 async def add_channel(channel_id: int, title: str | None = None):
+    # ID'yi normalize et
+    channel_id = normalize_channel_id(channel_id)
+
     conn = await db_connect()
     try:
         await conn.execute(
@@ -81,11 +110,15 @@ async def add_channel(channel_id: int, title: str | None = None):
             channel_id,
             title,
         )
+        log(f"✅ DB'ye kaydedildi: {channel_id} ({title})", "INFO")
     finally:
         await conn.close()
 
 
 async def delete_channel(channel_id: int):
+    # ID'yi normalize et
+    channel_id = normalize_channel_id(channel_id)
+
     conn = await db_connect()
     try:
         await conn.execute("DELETE FROM channels WHERE channel_id = $1", channel_id)
@@ -317,6 +350,19 @@ def help_text():
 
 
 ########################################
+# İSTATİSTİKLER
+########################################
+
+stats = {
+    "total_messages": 0,
+    "photos_detected": 0,
+    "photos_sent": 0,
+    "photos_blocked": 0,
+    "last_activity": None
+}
+
+
+########################################
 # KOMUT YÖNETİMİ
 ########################################
 
@@ -369,20 +415,6 @@ async def owner_commands(event):
         if stats['last_activity']:
             time_diff = datetime.now() - stats['last_activity']
             msg += f"\n🕐 Son Aktivite: {time_diff.seconds} saniye önce"
-
-        await event.reply(msg, parse_mode="markdown")
-        return
-
-    # LOG KOMUTU
-    if text_lower in ["log", "loglar", "logs"]:
-        msg = "📋 **Son Aktivite Logları**\n\n"
-        msg += "Heroku loglarını görmek için:\n"
-        msg += "```\nheroku logs --tail -a [uygulama-adı]\n```\n\n"
-        msg += f"📊 **Anlık Durum:**\n"
-        msg += f"• Toplam mesaj: {stats['total_messages']}\n"
-        msg += f"• Foto algılandı: {stats['photos_detected']}\n"
-        msg += f"• Foto gönderildi: {stats['photos_sent']}\n"
-        msg += f"• Foto engellendi: {stats['photos_blocked']}\n"
 
         await event.reply(msg, parse_mode="markdown")
         return
@@ -624,6 +656,9 @@ async def handle_state(event, state):
                 cid = int(text)
                 entity = await client.get_entity(cid)
                 title = getattr(entity, "title", None)
+
+            log(f"🔍 Kanal bulundu: {cid} ({title})", "INFO")
+
         except Exception as e:
             await event.reply(
                 f"❌ **Hata:** Kanal bulunamadı.\n\n`{str(e)}`\n\n"
@@ -635,7 +670,7 @@ async def handle_state(event, state):
 
         await add_channel(cid, title)
         user_states.pop(user_id, None)
-        log(f"Kanal eklendi: {cid} ({title})")
+        log(f"Kanal sisteme eklendi: {cid} ({title})")
         await event.reply(
             f"✅ **Kanal eklendi!**\n\n"
             f"• ID: `{cid}`\n"
@@ -781,19 +816,7 @@ async def handle_state(event, state):
 
 
 ########################################
-# İSTATİSTİKLER
-########################################
-
-stats = {
-    "total_messages": 0,
-    "photos_detected": 0,
-    "photos_sent": 0,
-    "photos_blocked": 0,
-    "last_activity": None
-}
-
-########################################
-# FOTOĞRAF DİNLEYİCİ - DETAYLI LOG
+# FOTOĞRAF DİNLEYİCİ - DÜZELTİLMİŞ
 ########################################
 
 @client.on(events.NewMessage)
@@ -810,15 +833,20 @@ async def photo_listener(event):
     channels = await get_channels()
     channel_ids = {c["id"] for c in channels}
 
-    # Log: Mesaj hangi kanaldan geldi
-    log(f"📨 Mesaj geldi: Chat ID={event.chat_id} | Mesaj ID={event.id}")
+    # Gelen mesajın chat_id'sini normalize et
+    normalized_chat_id = normalize_channel_id(event.chat_id)
 
-    # Kanal kontrolü
-    if event.chat_id not in channel_ids:
-        log(f"⏭️ ATLANDI: {event.chat_id} dinlenen kanallarda yok", "DEBUG")
+    # Log: Mesaj hangi kanaldan geldi
+    log(f"📨 Mesaj geldi: Chat ID={event.chat_id} | Normalize: {normalized_chat_id}")
+
+    # Kanal kontrolü - normalize edilmiş ID'lerle
+    if normalized_chat_id not in channel_ids:
+        if DEBUG:
+            log(f"⏭️ ATLANDI: {normalized_chat_id} dinlenen kanallarda yok", "DEBUG")
+            log(f"   Dinlenen kanallar: {channel_ids}", "DEBUG")
         return
 
-    log(f"✅ KANAL DOĞRU: {event.chat_id} dinleniyor", "INFO")
+    log(f"✅ KANAL DOĞRU: {normalized_chat_id} dinleniyor", "INFO")
 
     # FOTOĞRAF ÇIKART
     photo = extract_photo_from_message(event.message)

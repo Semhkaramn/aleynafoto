@@ -1,8 +1,10 @@
 import os
 import asyncio
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, Button
+from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument, PhotoSize
 import asyncpg
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 
@@ -15,8 +17,19 @@ OWNER_ID = int(os.getenv("OWNER_ID"))
 client = TelegramClient(SESSION, API_ID, API_HASH)
 
 # Soru-cevap akışları için basit state
-# {user_id: {"action": "...", "step": int, "data": {...}}}
 user_states = {}
+
+# Debug mode
+DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+
+
+########################################
+# LOGGER
+########################################
+
+def log(msg: str, level: str = "INFO"):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] [{level}] {msg}")
 
 
 ########################################
@@ -197,33 +210,391 @@ async def get_active_template_content():
 
 
 ########################################
-# YARDIM METNİ
+# YARDIMCI FONKSİYONLAR
 ########################################
 
-def help_text():
-    return (
-        "🔧 Yönetim komutları (yazı ile kullan):\n\n"
-        "📡 Kanallar:\n"
-        "  • `kanal ekle` → Dinlenecek kanal ekler\n"
-        "  • `kanal sil` → Dinlenecek kanal siler\n"
-        "  • `kanalları göster` → Dinlenen kanalları listeler\n\n"
-        "🎯 Hedef kanal:\n"
-        "  • `hedef kanalı ayarla` → Fotoğrafların gideceği kanalı seçer\n\n"
-        "✉ Taslaklar:\n"
-        "  • `taslak ekle` → Yeni mesaj taslağı ekler\n"
-        "  • `taslakları göster` → Kayıtlı taslakları listeler\n"
-        "  • `taslağı aktif et` → Kullanılacak taslağı seçer\n"
-        "  • `taslak sil` → Taslak siler\n\n"
-        "🚫 Yasak kelimeler:\n"
-        "  • `yasak kelime ekle`\n"
-        "  • `yasak kelime sil`\n"
-        "  • `yasak kelimeleri göster`\n\n"
-        "❌ `iptal` → Devam eden işlemi iptal eder\n"
+async def get_channel_info(channel_id: int):
+    """Kanal bilgilerini al"""
+    try:
+        entity = await client.get_entity(channel_id)
+        return {
+            "id": entity.id,
+            "title": getattr(entity, "title", "Bilinmiyor"),
+            "username": getattr(entity, "username", None)
+        }
+    except Exception as e:
+        log(f"Kanal bilgisi alınamadı {channel_id}: {e}", "ERROR")
+        return {"id": channel_id, "title": "Bilinmiyor", "username": None}
+
+
+def extract_photo_from_message(message):
+    """Mesajdan fotoğraf çıkartma - GELİŞTİRİLMİŞ VERSİYON"""
+
+    # 1. Direkt foto var mı?
+    if message.photo:
+        if DEBUG:
+            log("Foto bulundu: message.photo", "DEBUG")
+        return message.photo
+
+    # 2. Media kontrolü
+    if not message.media:
+        return None
+
+    # 3. MessageMediaPhoto
+    if isinstance(message.media, MessageMediaPhoto):
+        if DEBUG:
+            log("Foto bulundu: MessageMediaPhoto", "DEBUG")
+        return message.media.photo
+
+    # 4. Document içinde resim
+    if isinstance(message.media, MessageMediaDocument):
+        doc = message.media.document
+        if doc:
+            mime = getattr(doc, "mime_type", "")
+            if mime.startswith("image/"):
+                if DEBUG:
+                    log(f"Foto bulundu: Document ({mime})", "DEBUG")
+                return message.media
+
+    # 5. Genel media.photo
+    if hasattr(message.media, "photo"):
+        if DEBUG:
+            log("Foto bulundu: media.photo", "DEBUG")
+        return message.media.photo
+
+    # 6. WebPage içinde foto
+    if hasattr(message.media, "webpage"):
+        webpage = message.media.webpage
+        if hasattr(webpage, "photo") and webpage.photo:
+            if DEBUG:
+                log("Foto bulundu: webpage.photo", "DEBUG")
+            return webpage.photo
+
+    return None
+
+
+########################################
+# MENÜ SİSTEMİ
+########################################
+
+async def show_main_menu(event):
+    """Ana menüyü göster"""
+    text = (
+        "🤖 **Telegram Fotoğraf Yönetim Botu**\n\n"
+        "Aşağıdaki butonları kullanarak botu yönetebilirsin.\n"
+        "Fotoğraf dinleme, yasak kelime filtreleme ve otomatik paylaşım özellikleri mevcut."
     )
 
+    buttons = [
+        [Button.inline("📡 Kanallar", b"menu_channels")],
+        [Button.inline("🎯 Hedef Kanal", b"menu_target")],
+        [Button.inline("✉️ Mesaj Taslakları", b"menu_templates")],
+        [Button.inline("🚫 Yasak Kelimeler", b"menu_banned")],
+        [Button.inline("📊 Sistem Durumu", b"menu_status")],
+        [Button.inline("❓ Yardım", b"menu_help")]
+    ]
+
+    await event.reply(text, buttons=buttons, parse_mode="markdown")
+
+
+async def show_channels_menu(event):
+    """Kanal yönetim menüsü"""
+    channels = await get_channels()
+
+    text = "📡 **Dinlenen Kanallar**\n\n"
+    if channels:
+        for c in channels:
+            text += f"• `{c['id']}` - {c['title'] or 'İsimsiz'}\n"
+    else:
+        text += "_Henüz dinlenen kanal yok._\n"
+
+    text += f"\n**Toplam:** {len(channels)} kanal"
+
+    buttons = [
+        [Button.inline("➕ Kanal Ekle", b"add_channel")],
+        [Button.inline("➖ Kanal Sil", b"del_channel")],
+        [Button.inline("🔄 Listeyi Yenile", b"menu_channels")],
+        [Button.inline("◀️ Ana Menü", b"menu_main")]
+    ]
+
+    await event.edit(text, buttons=buttons, parse_mode="markdown")
+
+
+async def show_target_menu(event):
+    """Hedef kanal menüsü"""
+    target_str = await get_setting("target_channel_id")
+
+    text = "🎯 **Hedef Kanal Ayarları**\n\n"
+
+    if target_str:
+        target_id = int(target_str)
+        info = await get_channel_info(target_id)
+        text += f"✅ **Mevcut Hedef Kanal:**\n"
+        text += f"• ID: `{info['id']}`\n"
+        text += f"• İsim: {info['title']}\n"
+        if info['username']:
+            text += f"• Kullanıcı Adı: @{info['username']}\n"
+    else:
+        text += "❌ Hedef kanal ayarlanmamış.\n\n"
+        text += "Dinlenen kanallardan gelen fotoğraflar buraya gönderilecek."
+
+    buttons = [
+        [Button.inline("✏️ Hedef Kanalı Değiştir", b"set_target")],
+    ]
+
+    if target_str:
+        buttons.append([Button.inline("🗑 Hedef Kanalı Kaldır", b"remove_target")])
+
+    buttons.append([Button.inline("◀️ Ana Menü", b"menu_main")])
+
+    await event.edit(text, buttons=buttons, parse_mode="markdown")
+
+
+async def show_templates_menu(event):
+    """Taslak menüsü"""
+    templates = await list_templates()
+
+    text = "✉️ **Mesaj Taslakları**\n\n"
+
+    if templates:
+        for t in templates:
+            status = "✅" if t["is_active"] else "▫️"
+            text += f"{status} **{t['name']}**\n"
+            preview = t['content'][:50] + "..." if len(t['content']) > 50 else t['content']
+            text += f"   _{preview}_\n\n"
+    else:
+        text += "_Henüz taslak yok._\n"
+
+    text += f"\n**Toplam:** {len(templates)} taslak"
+
+    buttons = [
+        [Button.inline("➕ Taslak Ekle", b"add_template")],
+        [Button.inline("✅ Aktif Taslak Seç", b"set_template")],
+        [Button.inline("🗑 Taslak Sil", b"del_template")],
+        [Button.inline("🔄 Listeyi Yenile", b"menu_templates")],
+        [Button.inline("◀️ Ana Menü", b"menu_main")]
+    ]
+
+    await event.edit(text, buttons=buttons, parse_mode="markdown")
+
+
+async def show_banned_menu(event):
+    """Yasak kelime menüsü"""
+    banned = await get_banned_words()
+
+    text = "🚫 **Yasak Kelime Listesi**\n\n"
+
+    if banned:
+        for word in banned:
+            text += f"• `{word}`\n"
+    else:
+        text += "_Yasak kelime yok._\n"
+
+    text += f"\n**Toplam:** {len(banned)} kelime"
+
+    buttons = [
+        [Button.inline("➕ Kelime Ekle", b"add_banned")],
+        [Button.inline("➖ Kelime Sil", b"del_banned")],
+        [Button.inline("🔄 Listeyi Yenile", b"menu_banned")],
+        [Button.inline("◀️ Ana Menü", b"menu_main")]
+    ]
+
+    await event.edit(text, buttons=buttons, parse_mode="markdown")
+
+
+async def show_status_menu(event):
+    """Sistem durumu"""
+    channels = await get_channels()
+    templates = await list_templates()
+    banned = await get_banned_words()
+    target_str = await get_setting("target_channel_id")
+    active_tpl = await get_active_template_content()
+
+    text = "📊 **Sistem Durumu**\n\n"
+
+    text += f"📡 Dinlenen Kanal: **{len(channels)}**\n"
+    text += f"🎯 Hedef Kanal: {'✅ Ayarlı' if target_str else '❌ Yok'}\n"
+    text += f"✉️ Mesaj Taslağı: **{len(templates)}**\n"
+    text += f"✅ Aktif Taslak: {'Var' if active_tpl else 'Yok'}\n"
+    text += f"🚫 Yasak Kelime: **{len(banned)}**\n"
+    text += f"🤖 Bot Durumu: ✅ Çalışıyor\n"
+    text += f"🔧 Debug Mode: {'🟢 Açık' if DEBUG else '🔴 Kapalı'}\n"
+
+    buttons = [
+        [Button.inline("🔄 Yenile", b"menu_status")],
+        [Button.inline("◀️ Ana Menü", b"menu_main")]
+    ]
+
+    await event.edit(text, buttons=buttons, parse_mode="markdown")
+
+
+async def show_help_menu(event):
+    """Yardım menüsü"""
+    text = (
+        "❓ **Yardım ve Kullanım Kılavuzu**\n\n"
+        "**🎯 Bot Nasıl Çalışır?**\n"
+        "1. Dinlenen kanallara fotoğraf geldiğinde algılar\n"
+        "2. Yasak kelime kontrolü yapar\n"
+        "3. Fotoğrafı hedef kanala aktif taslakla gönderir\n\n"
+
+        "**📋 Hızlı Başlangıç:**\n"
+        "• Dinlenecek kanalları ekle\n"
+        "• Hedef kanalı ayarla\n"
+        "• Mesaj taslağı oluştur ve aktif et\n"
+        "• İsteğe bağlı yasak kelime ekle\n\n"
+
+        "**💡 Metin Komutları:**\n"
+        "`menü` - Ana menüyü göster\n"
+        "`iptal` - İşlemi iptal et\n"
+        "`durum` - Sistem durumunu göster\n\n"
+
+        "**⚠️ Önemli Notlar:**\n"
+        "• Bot sadece fotoğraf içeren mesajları algılar\n"
+        "• Yasak kelime caption içinde aranır\n"
+        "• Taslak HTML/Markdown destekler\n"
+    )
+
+    buttons = [
+        [Button.inline("◀️ Ana Menü", b"menu_main")]
+    ]
+
+    await event.edit(text, buttons=buttons, parse_mode="markdown")
+
 
 ########################################
-# OWNER MESAJLARI (SENİNLE SOHBET)
+# CALLBACK QUERY HANDLER (BUTONLAR)
+########################################
+
+@client.on(events.CallbackQuery)
+async def callback_handler(event):
+    data = event.data.decode("utf-8")
+    user_id = event.sender_id
+
+    # Sadece owner kullanabilir
+    if user_id != OWNER_ID:
+        await event.answer("⛔ Bu botu sadece sahibi kullanabilir!", alert=True)
+        return
+
+    # Menüler
+    if data == "menu_main":
+        await show_main_menu(event)
+    elif data == "menu_channels":
+        await show_channels_menu(event)
+    elif data == "menu_target":
+        await show_target_menu(event)
+    elif data == "menu_templates":
+        await show_templates_menu(event)
+    elif data == "menu_banned":
+        await show_banned_menu(event)
+    elif data == "menu_status":
+        await show_status_menu(event)
+    elif data == "menu_help":
+        await show_help_menu(event)
+
+    # İşlemler
+    elif data == "add_channel":
+        user_states[user_id] = {"action": "add_channel", "step": 1, "data": {}}
+        await event.edit(
+            "📡 **Kanal Ekleme**\n\n"
+            "Dinlenecek kanalın kullanıcı adını (`@kanaladi`) veya ID'sini (`-100...`) yaz.\n\n"
+            "_İptal etmek için: `iptal`_",
+            parse_mode="markdown"
+        )
+
+    elif data == "del_channel":
+        channels = await get_channels()
+        if not channels:
+            await event.answer("❌ Silinecek kanal yok!", alert=True)
+            return
+        user_states[user_id] = {"action": "del_channel", "step": 1, "data": {}}
+        await event.edit(
+            "🗑 **Kanal Silme**\n\n"
+            "Silmek istediğin kanalın kullanıcı adını (`@kanal`) veya ID'sini (`-100...`) yaz.\n\n"
+            "_İptal etmek için: `iptal`_",
+            parse_mode="markdown"
+        )
+
+    elif data == "set_target":
+        user_states[user_id] = {"action": "set_target", "step": 1, "data": {}}
+        await event.edit(
+            "🎯 **Hedef Kanal Ayarlama**\n\n"
+            "Fotoğrafların gönderileceği kanalın kullanıcı adını (`@kanal`) veya ID'sini (`-100...`) yaz.\n\n"
+            "_İptal etmek için: `iptal`_",
+            parse_mode="markdown"
+        )
+
+    elif data == "remove_target":
+        await set_setting("target_channel_id", "")
+        await event.answer("✅ Hedef kanal kaldırıldı!", alert=True)
+        await show_target_menu(event)
+
+    elif data == "add_template":
+        user_states[user_id] = {"action": "add_template", "step": 1, "data": {}}
+        await event.edit(
+            "✉️ **Taslak Ekleme**\n\n"
+            "**Adım 1/2:** Taslak için bir isim yaz.\n\n"
+            "Örnek: `VIP Taslak`, `Standart Mesaj`\n\n"
+            "_İptal etmek için: `iptal`_",
+            parse_mode="markdown"
+        )
+
+    elif data == "set_template":
+        templates = await list_templates()
+        if not templates:
+            await event.answer("❌ Önce taslak eklemelisin!", alert=True)
+            return
+        user_states[user_id] = {"action": "set_template", "step": 1, "data": {}}
+        names = "\n".join([f"• `{t['name']}`" for t in templates])
+        await event.edit(
+            "✅ **Aktif Taslak Seçimi**\n\n"
+            f"Aktif yapmak istediğin taslağın ismini yaz:\n\n{names}\n\n"
+            "_İptal etmek için: `iptal`_",
+            parse_mode="markdown"
+        )
+
+    elif data == "del_template":
+        templates = await list_templates()
+        if not templates:
+            await event.answer("❌ Silinecek taslak yok!", alert=True)
+            return
+        user_states[user_id] = {"action": "del_template", "step": 1, "data": {}}
+        names = "\n".join([f"• `{t['name']}`" for t in templates])
+        await event.edit(
+            "🗑 **Taslak Silme**\n\n"
+            f"Silmek istediğin taslağın ismini yaz:\n\n{names}\n\n"
+            "_İptal etmek için: `iptal`_",
+            parse_mode="markdown"
+        )
+
+    elif data == "add_banned":
+        user_states[user_id] = {"action": "add_ban", "step": 1, "data": {}}
+        await event.edit(
+            "🚫 **Yasak Kelime Ekleme**\n\n"
+            "Yasaklamak istediğin kelimeyi yaz.\n\n"
+            "Bu kelime caption içinde geçerse fotoğraf paylaşılmaz.\n\n"
+            "_İptal etmek için: `iptal`_",
+            parse_mode="markdown"
+        )
+
+    elif data == "del_banned":
+        banned = await get_banned_words()
+        if not banned:
+            await event.answer("❌ Silinecek kelime yok!", alert=True)
+            return
+        user_states[user_id] = {"action": "del_ban", "step": 1, "data": {}}
+        words = "\n".join([f"• `{w}`" for w in banned])
+        await event.edit(
+            "🔓 **Yasak Kelime Kaldırma**\n\n"
+            f"Kaldırmak istediğin kelimeyi yaz:\n\n{words}\n\n"
+            "_İptal etmek için: `iptal`_",
+            parse_mode="markdown"
+        )
+
+    await event.answer()
+
+
+########################################
+# OWNER MESAJLARI
 ########################################
 
 @client.on(events.NewMessage(from_users=OWNER_ID))
@@ -233,147 +604,53 @@ async def owner_commands(event):
     text = raw_text.strip()
     text_lower = text.lower().lstrip("/")
 
-    # iptal
+    # İptal
     if text_lower in ["iptal", "cancel"]:
         user_states.pop(user_id, None)
-        await event.reply("❌ İşlem iptal edildi.")
+        await event.reply("❌ İşlem iptal edildi.", buttons=[[Button.inline("◀️ Ana Menü", b"menu_main")]])
         return
 
-    # devam eden akış varsa onu işleyelim
+    # Devam eden akış varsa işle
     state = user_states.get(user_id)
     if state:
         await handle_state(event, state)
         return
 
-    # yardım / menü
-    if text_lower in ["menu", "menü", "yardım", "help", "komutlar"]:
-        await event.reply(help_text())
+    # Menü komutları
+    if text_lower in ["menu", "menü", "start", "baslat", "/start"]:
+        await show_main_menu(event)
         return
 
-    # Taslak ekle
-    if text_lower in ["taslak ekle", "yeni taslak", "template ekle"]:
-        user_states[user_id] = {"action": "add_template", "step": 1, "data": {}}
-        await event.reply(
-            "✉ Yeni taslak ekliyorsun.\nLütfen taslak için bir *isim* yaz.",
-            parse_mode="markdown",
-        )
-        return
-
-    # Taslakları göster
-    if text_lower in ["taslakları göster", "taslak listesi", "taslak listesi göster", "template list"]:
-        templates = await list_templates()
-        if not templates:
-            await event.reply("✉ Kayıtlı taslak yok.")
-        else:
-            msg = "✉ *Mesaj Taslakları:*\n\n"
-            for t in templates:
-                mark = "✅" if t["is_active"] else "▫️"
-                msg += f"{mark} `{t['name']}`\n"
-            await event.reply(msg, parse_mode="markdown")
-        return
-
-    # Taslağı aktif et
-    if text_lower in ["taslağı aktif et", "aktif taslak seç", "aktif taslak"]:
-        templates = await list_templates()
-        if not templates:
-            await event.reply("Önce en az bir taslak ekle (`taslak ekle`).")
-            return
-        user_states[user_id] = {"action": "set_template", "step": 1, "data": {}}
-        names = ", ".join([t["name"] for t in templates])
-        await event.reply(
-            "✅ Aktif yapmak istediğin taslağın *ismini* yaz.\n"
-            f"Mevcut taslaklar: {names}",
-            parse_mode="markdown",
-        )
-        return
-
-    # Taslak sil
-    if text_lower in ["taslak sil", "template sil"]:
-        templates = await list_templates()
-        if not templates:
-            await event.reply("Silinecek taslak yok.")
-            return
-        user_states[user_id] = {"action": "del_template", "step": 1, "data": {}}
-        names = ", ".join([t["name"] for t in templates])
-        await event.reply(
-            "🗑 Silmek istediğin taslağın *ismini* yaz.\n"
-            f"Mevcut taslaklar: {names}",
-            parse_mode="markdown",
-        )
-        return
-
-    # Kanal ekle
-    if text_lower in ["kanal ekle", "dinleme kanalı ekle"]:
-        user_states[user_id] = {"action": "add_channel", "step": 1, "data": {}}
-        await event.reply(
-            "📡 Dinlenecek kanalı ekliyorsun.\n"
-            "Kanal kullanıcı adını (`@kanaladi`) veya ID'sini (`-100...`) yaz."
-        )
-        return
-
-    # Kanal sil
-    if text_lower in ["kanal sil", "dinleme kanalı sil"]:
-        user_states[user_id] = {"action": "del_channel", "step": 1, "data": {}}
-        await event.reply(
-            "🗑 Silmek istediğin kanalın kullanıcı adını (`@kanal`) veya ID'sini (`-100...`) yaz."
-        )
-        return
-
-    # Kanalları göster
-    if text_lower in ["kanalları göster", "kanal listesi", "dinleme kanalları"]:
+    if text_lower in ["durum", "status", "info"]:
+        # Buton olmadan durum göster
         channels = await get_channels()
-        if not channels:
-            await event.reply("📭 Dinlenen kanal yok.")
-        else:
-            msg = "📡 *Dinlenen Kanallar:*\n\n"
-            for c in channels:
-                line = f"- `{c['id']}`"
-                if c["title"]:
-                    line += f" | {c['title']}"
-                msg += line + "\n"
-            await event.reply(msg, parse_mode="markdown")
-        return
-
-    # Hedef kanal ayarla
-    if text_lower in ["hedef kanalı ayarla", "hedef kanal ayarla", "hedef kanal"]:
-        user_states[user_id] = {"action": "set_target", "step": 1, "data": {}}
-        await event.reply(
-            "🎯 Fotoğrafların gönderileceği kanalın kullanıcı adını (`@kanal`) "
-            "veya ID'sini (`-100...`) yaz."
-        )
-        return
-
-    # Yasak kelime ekle
-    if text_lower in ["yasak kelime ekle", "ban kelime ekle"]:
-        user_states[user_id] = {"action": "add_ban", "step": 1, "data": {}}
-        await event.reply("🚫 Yasaklamak istediğin kelimeyi yaz.")
-        return
-
-    # Yasak kelime sil
-    if text_lower in ["yasak kelime sil", "ban kelime sil"]:
-        user_states[user_id] = {"action": "del_ban", "step": 1, "data": {}}
-        await event.reply("🔓 Kaldırmak istediğin yasak kelimeyi yaz.")
-        return
-
-    # Yasak kelimeleri göster
-    if text_lower in ["yasak kelimeleri göster", "yasak kelimeler", "ban listesi"]:
+        templates = await list_templates()
         banned = await get_banned_words()
-        if not banned:
-            await event.reply("🚫 Yasak kelime listesi boş.")
-        else:
-            msg = "🚫 *Yasak Kelimeler:*\n\n" + "\n".join([f"- {w}" for w in banned])
-            await event.reply(msg, parse_mode="markdown")
+        target_str = await get_setting("target_channel_id")
+
+        msg = "📊 **Hızlı Durum:**\n"
+        msg += f"📡 {len(channels)} kanal dinleniyor\n"
+        msg += f"🎯 Hedef: {'✅' if target_str else '❌'}\n"
+        msg += f"✉️ {len(templates)} taslak\n"
+        msg += f"🚫 {len(banned)} yasak kelime\n"
+
+        await event.reply(msg, parse_mode="markdown", buttons=[[Button.inline("📊 Detaylı Durum", b"menu_status")]])
         return
 
-    # Tanınmayan mesaj
+    if text_lower in ["yardım", "help", "?", "yardim"]:
+        await show_help_menu(event)
+        return
+
+    # Tanınmayan komut
     await event.reply(
-        "Ne yapmak istediğini anlamadım.\n"
-        "`menü` yazıp kullanılabilir komutlara bakabilirsin."
+        "❓ Ne yapmak istediğini anlamadım.\n\n"
+        "Menüyü görmek için `menü` yaz.",
+        buttons=[[Button.inline("🤖 Menüyü Aç", b"menu_main")]]
     )
 
 
 ########################################
-# STATE HANDLER (SORU-CEVAP AKIŞLARI)
+# STATE HANDLER
 ########################################
 
 async def handle_state(event, state):
@@ -396,16 +673,22 @@ async def handle_state(event, state):
                 title = getattr(entity, "title", None)
         except Exception as e:
             await event.reply(
-                f"Hata: kanalı bulamadım. ({e})\n"
-                "Tekrar dene veya `iptal` yaz."
+                f"❌ **Hata:** Kanal bulunamadı.\n\n`{str(e)}`\n\n"
+                "Tekrar dene veya `iptal` yaz.",
+                parse_mode="markdown"
             )
+            log(f"Kanal eklenemedi: {e}", "ERROR")
             return
 
         await add_channel(cid, title)
         user_states.pop(user_id, None)
+        log(f"Kanal eklendi: {cid} ({title})")
         await event.reply(
-            f"✅ Dinlenecek kanala eklendi: `{cid}` | {title}",
+            f"✅ **Kanal eklendi!**\n\n"
+            f"ID: `{cid}`\n"
+            f"İsim: {title}",
             parse_mode="markdown",
+            buttons=[[Button.inline("📡 Kanallara Dön", b"menu_channels")]]
         )
         return
 
@@ -419,14 +702,20 @@ async def handle_state(event, state):
                 cid = int(text)
         except Exception as e:
             await event.reply(
-                f"Hata: kanalı bulamadım. ({e})\n"
-                "Tekrar dene veya `iptal` yaz."
+                f"❌ **Hata:** Kanal bulunamadı.\n\n`{str(e)}`\n\n"
+                "Tekrar dene veya `iptal` yaz.",
+                parse_mode="markdown"
             )
             return
 
         await delete_channel(cid)
         user_states.pop(user_id, None)
-        await event.reply(f"🗑 Silindi: `{cid}`", parse_mode="markdown")
+        log(f"Kanal silindi: {cid}")
+        await event.reply(
+            f"🗑 **Kanal silindi!**\n\nID: `{cid}`",
+            parse_mode="markdown",
+            buttons=[[Button.inline("📡 Kanallara Dön", b"menu_channels")]]
+        )
         return
 
     # HEDEF KANAL
@@ -435,18 +724,29 @@ async def handle_state(event, state):
             if text.startswith("@"):
                 entity = await client.get_entity(text)
                 cid = entity.id
+                title = getattr(entity, "title", "Bilinmiyor")
             else:
                 cid = int(text)
+                entity = await client.get_entity(cid)
+                title = getattr(entity, "title", "Bilinmiyor")
         except Exception as e:
             await event.reply(
-                f"Hata: kanalı bulamadım. ({e})\n"
-                "Tekrar dene veya `iptal` yaz."
+                f"❌ **Hata:** Kanal bulunamadı.\n\n`{str(e)}`\n\n"
+                "Tekrar dene veya `iptal` yaz.",
+                parse_mode="markdown"
             )
             return
 
         await set_setting("target_channel_id", str(cid))
         user_states.pop(user_id, None)
-        await event.reply(f"🎯 Hedef kanal ayarlandı: `{cid}`", parse_mode="markdown")
+        log(f"Hedef kanal ayarlandı: {cid} ({title})")
+        await event.reply(
+            f"🎯 **Hedef kanal ayarlandı!**\n\n"
+            f"ID: `{cid}`\n"
+            f"İsim: {title}",
+            parse_mode="markdown",
+            buttons=[[Button.inline("🎯 Hedef Kanala Dön", b"menu_target")]]
+        )
         return
 
     # TASLAK EKLE: İSİM
@@ -454,10 +754,12 @@ async def handle_state(event, state):
         data["name"] = text
         state["step"] = 2
         await event.reply(
-            "Şimdi bu taslak için kullanılacak *mesaj içeriğini* gönder.\n"
-            "HTML / markdown / emoji / link hepsi serbest.\n\n"
-            "_Gönderdiğin içerik fotoğrafın altına aynen yazılacak._",
-            parse_mode="markdown",
+            "✉️ **Taslak Ekleme**\n\n"
+            f"**Adım 2/2:** `{text}` taslağı için mesaj içeriğini gönder.\n\n"
+            "HTML, Markdown, emoji, link kullanabilirsin.\n"
+            "Bu metin fotoğrafın caption'ı olarak kullanılacak.\n\n"
+            "_İptal etmek için: `iptal`_",
+            parse_mode="markdown"
         )
         return
 
@@ -467,10 +769,13 @@ async def handle_state(event, state):
         content = text
         await add_template(name, content)
         user_states.pop(user_id, None)
+        log(f"Taslak eklendi: {name}")
         await event.reply(
-            f"✉ Taslak kaydedildi: `{name}`\n"
-            "Not: Kullanmak için `taslağı aktif et` yazıp seçebilirsin.",
+            f"✅ **Taslak kaydedildi!**\n\n"
+            f"İsim: `{name}`\n\n"
+            f"Kullanmak için aktif etmeyi unutma.",
             parse_mode="markdown",
+            buttons=[[Button.inline("✉️ Taslak Menüsü", b"menu_templates")]]
         )
         return
 
@@ -479,7 +784,12 @@ async def handle_state(event, state):
         name = text
         await set_active_template(name)
         user_states.pop(user_id, None)
-        await event.reply(f"✅ Aktif taslak: `{name}`", parse_mode="markdown")
+        log(f"Aktif taslak: {name}")
+        await event.reply(
+            f"✅ **Aktif taslak ayarlandı!**\n\n`{name}`",
+            parse_mode="markdown",
+            buttons=[[Button.inline("✉️ Taslak Menüsü", b"menu_templates")]]
+        )
         return
 
     # TASLAK SİL
@@ -487,20 +797,27 @@ async def handle_state(event, state):
         name = text
         await delete_template(name)
         user_states.pop(user_id, None)
-        await event.reply(f"🗑 Taslak silindi: `{name}`", parse_mode="markdown")
+        log(f"Taslak silindi: {name}")
+        await event.reply(
+            f"🗑 **Taslak silindi!**\n\n`{name}`",
+            parse_mode="markdown",
+            buttons=[[Button.inline("✉️ Taslak Menüsü", b"menu_templates")]]
+        )
         return
 
     # YASAK KELİME EKLE
     if action == "add_ban" and step == 1:
         word = text.strip()
         if not word:
-            await event.reply("Boş kelime olmaz. Tekrar yaz veya `iptal` de.")
+            await event.reply("❌ Boş kelime olmaz. Tekrar yaz veya `iptal` et.")
             return
         await add_banned_word(word)
         user_states.pop(user_id, None)
+        log(f"Yasak kelime eklendi: {word}")
         await event.reply(
-            f"🚫 Yasak kelime eklendi: `{word}`",
+            f"🚫 **Yasak kelime eklendi!**\n\n`{word}`",
             parse_mode="markdown",
+            buttons=[[Button.inline("🚫 Yasak Kelimeler", b"menu_banned")]]
         )
         return
 
@@ -509,93 +826,76 @@ async def handle_state(event, state):
         word = text.strip()
         await delete_banned_word(word)
         user_states.pop(user_id, None)
+        log(f"Yasak kelime kaldırıldı: {word}")
         await event.reply(
-            f"🔓 Yasak kelime kaldırıldı: `{word}`",
+            f"🔓 **Yasak kelime kaldırıldı!**\n\n`{word}`",
             parse_mode="markdown",
+            buttons=[[Button.inline("🚫 Yasak Kelimeler", b"menu_banned")]]
         )
         return
 
 
 ########################################
-# TÜM MESAJLARI DİNLE – FOTOĞRAF VARSA AL
+# FOTOĞRAF DİNLEYİCİ - İYİLEŞTİRİLMİŞ
 ########################################
 
 @client.on(events.NewMessage)
 async def photo_listener(event):
-    # Sahibin özel sohbeti dinleme
+    # Owner'ın özel mesajlarını dinleme
     if event.is_private and event.sender_id == OWNER_ID:
         return
 
-    # Dinlenen kanallar listesi
+    # Dinlenen kanallar
     channels = await get_channels()
     channel_ids = {c["id"] for c in channels}
+
     if event.chat_id not in channel_ids:
         return
 
-    # Tüm fotoğraf kaynaklarını tek tek kontrol et
-    photo = None
+    # FOTOĞRAF ÇIKART
+    photo = extract_photo_from_message(event.message)
 
-    # 1) Normal foto
-    if event.photo:
-        photo = event.photo
-
-    # 2) Kanal postu fotoğrafı
-    if not photo and event.media:
-        photo = getattr(event.media, "photo", None)
-
-    # 3) Eski Telegram versiyonları
-    if not photo and hasattr(event.message, "media") and event.message.media:
-        photo = getattr(event.message.media, "photo", None)
-
-    # 4) Document içinde foto olabilir (jpg/png/pdf hariç)
-    if not photo and event.message.document:
-        if getattr(event.message.document, "mime_type", "").startswith("image"):
-            photo = event.message.media
-
-    # 5) Bazı kanallar web_page.thumb kullanır
     if not photo:
-        wp = getattr(event.message, "media", None)
-        if wp and hasattr(wp, "webpage") and hasattr(wp.webpage, "photo"):
-            photo = wp.webpage.photo
-
-    # Eğer hiçbir foto formatı yoksa pas geç
-    if not photo:
+        if DEBUG:
+            log(f"Mesaj fotoğraf içermiyor (chat: {event.chat_id})", "DEBUG")
         return
 
-    # Yasak kelime kontrolü
+    log(f"Fotoğraf algılandı: {event.chat_id} (msg: {event.id})")
+
+    # YASAK KELİME KONTROLÜ
     caption = (event.message.message or "").lower()
     banned = await get_banned_words()
-    for w in banned:
-        if w and w.lower() in caption:
-            print(f"[FİLTRE] Yasak kelime geçti: {w}")
+
+    for word in banned:
+        if word and word.lower() in caption:
+            log(f"ENGELLENDI - Yasak kelime: '{word}' | Chat: {event.chat_id}")
             return
 
-    # Hedef kanal
+    # HEDEF KANAL KONTROLÜ
     target_str = await get_setting("target_channel_id")
     if not target_str:
-        print("[UYARI] hedef kanalı ayarlamadın.")
+        log("UYARI: Hedef kanal ayarlanmamış!", "WARN")
         return
 
     target_id = int(target_str)
 
-    # Aktif taslak
-    tpl = await get_active_template_content()
-    if not tpl:
-        tpl = "📸 Yeni fotoğraf"
+    # AKTİF TASLAK
+    template = await get_active_template_content()
+    if not template:
+        template = "📸 Yeni fotoğraf"
+        log("UYARI: Aktif taslak yok, varsayılan mesaj kullanılıyor", "WARN")
 
-    # Gönder
+    # GÖNDER
     try:
         await client.send_file(
             target_id,
             file=photo,
-            caption=tpl,
+            caption=template,
             parse_mode="html"
         )
-        print(f"[OK] Fotoğraf {event.chat_id} -> {target_id}")
+        log(f"✓ GÖNDERILDI: {event.chat_id} → {target_id}")
     except Exception as e:
-        print("[HATA] Gönderilemedi:", e)
-
-
+        log(f"HATA - Gönderilemedi: {e}", "ERROR")
 
 
 ########################################
@@ -603,13 +903,17 @@ async def photo_listener(event):
 ########################################
 
 async def main():
-    print("[*] Telegram'a bağlanılıyor...")
+    log("Telegram'a bağlanılıyor...")
     await client.start()
     me = await client.get_me()
-    print(f"[+] Giriş yapıldı: {me.id} | @{me.username}")
-    print("[*] Sistem çalışıyor. Yönetim için bana 'menü' yaz.")
+    log(f"Giriş yapıldı: {me.id} | @{me.username or 'yok'}")
+    log("=" * 50)
+    log("🤖 Bot aktif! Yönetim için 'menü' yaz.")
+    log(f"Debug Mode: {DEBUG}")
+    log("=" * 50)
 
-    await asyncio.Future()  # sonsuza kadar dinle
+    await asyncio.Future()
 
 
-client.loop.run_until_complete(main())
+if __name__ == "__main__":
+    client.loop.run_until_complete(main())

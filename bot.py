@@ -898,7 +898,7 @@ async def photo_listener(event):
     # AKTİF TASLAK
     template = await get_active_template_content()
     if not template:
-        template = "📸 Yeni fotoğraf"
+        template = ""
         log("⚠️ Aktif taslak yok, varsayılan mesaj kullanılıyor", "WARN")
     else:
         log(f"✉️ Taslak kullanılıyor: {template[:30]}...", "DEBUG")

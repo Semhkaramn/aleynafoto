@@ -517,27 +517,48 @@ async def handle_state(event, state):
 
 
 ########################################
-# FOTOĞRAF DİNLEYEN KISIM
+# TÜM MESAJLARI DİNLE – FOTOĞRAF VARSA AL
 ########################################
 
 @client.on(events.NewMessage)
 async def photo_listener(event):
-    # Sahibinle özel sohbeti atla
+    # Sahibin özel sohbeti dinleme
     if event.is_private and event.sender_id == OWNER_ID:
         return
 
-    # Dinlenen kanallar
+    # Dinlenen kanallar listesi
     channels = await get_channels()
     channel_ids = {c["id"] for c in channels}
     if event.chat_id not in channel_ids:
         return
 
-    # FOTOĞRAF ALMA (KANAL POSTU + NORMAL FOTOĞRAF)
-    photo = event.photo
+    # Tüm fotoğraf kaynaklarını tek tek kontrol et
+    photo = None
+
+    # 1) Normal foto
+    if event.photo:
+        photo = event.photo
+
+    # 2) Kanal postu fotoğrafı
     if not photo and event.media:
-        # Kanal postlarındaki görseller buraya düşer
         photo = getattr(event.media, "photo", None)
 
+    # 3) Eski Telegram versiyonları
+    if not photo and hasattr(event.message, "media") and event.message.media:
+        photo = getattr(event.message.media, "photo", None)
+
+    # 4) Document içinde foto olabilir (jpg/png/pdf hariç)
+    if not photo and event.message.document:
+        if getattr(event.message.document, "mime_type", "").startswith("image"):
+            photo = event.message.media
+
+    # 5) Bazı kanallar web_page.thumb kullanır
+    if not photo:
+        wp = getattr(event.message, "media", None)
+        if wp and hasattr(wp, "webpage") and hasattr(wp.webpage, "photo"):
+            photo = wp.webpage.photo
+
+    # Eğer hiçbir foto formatı yoksa pas geç
     if not photo:
         return
 
@@ -552,7 +573,7 @@ async def photo_listener(event):
     # Hedef kanal
     target_str = await get_setting("target_channel_id")
     if not target_str:
-        print("[UYARI] target_channel_id ayarlı değil. 'hedef kanalı ayarla' yaz.")
+        print("[UYARI] hedef kanalı ayarlamadın.")
         return
 
     target_id = int(target_str)
@@ -562,16 +583,18 @@ async def photo_listener(event):
     if not tpl:
         tpl = "📸 Yeni fotoğraf"
 
+    # Gönder
     try:
         await client.send_file(
             target_id,
             file=photo,
             caption=tpl,
-            parse_mode="html",
+            parse_mode="html"
         )
         print(f"[OK] Fotoğraf {event.chat_id} -> {target_id}")
     except Exception as e:
-        print("[HATA] Fotoğraf gönderilemedi:", e)
+        print("[HATA] Gönderilemedi:", e)
+
 
 
 

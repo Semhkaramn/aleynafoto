@@ -522,21 +522,26 @@ async def handle_state(event, state):
 
 @client.on(events.NewMessage)
 async def photo_listener(event):
-    # sahibinle özel sohbeti burada işlemeyelim
+    # Sahibinle özel sohbeti atla
     if event.is_private and event.sender_id == OWNER_ID:
         return
 
-    # dinlenen kanallar
+    # Dinlenen kanallar
     channels = await get_channels()
     channel_ids = {c["id"] for c in channels}
     if event.chat_id not in channel_ids:
         return
 
-    # foto yoksa geç
-    if not event.photo:
+    # FOTOĞRAF ALMA (KANAL POSTU + NORMAL FOTOĞRAF)
+    photo = event.photo
+    if not photo and event.media:
+        # Kanal postlarındaki görseller buraya düşer
+        photo = getattr(event.media, "photo", None)
+
+    if not photo:
         return
 
-    # yasak kelime kontrolü
+    # Yasak kelime kontrolü
     caption = (event.message.message or "").lower()
     banned = await get_banned_words()
     for w in banned:
@@ -544,7 +549,7 @@ async def photo_listener(event):
             print(f"[FİLTRE] Yasak kelime geçti: {w}")
             return
 
-    # hedef kanal
+    # Hedef kanal
     target_str = await get_setting("target_channel_id")
     if not target_str:
         print("[UYARI] target_channel_id ayarlı değil. 'hedef kanalı ayarla' yaz.")
@@ -552,7 +557,7 @@ async def photo_listener(event):
 
     target_id = int(target_str)
 
-    # aktif taslak
+    # Aktif taslak
     tpl = await get_active_template_content()
     if not tpl:
         tpl = "📸 Yeni fotoğraf"
@@ -560,13 +565,14 @@ async def photo_listener(event):
     try:
         await client.send_file(
             target_id,
-            file=event.photo,
+            file=photo,
             caption=tpl,
-            parse_mode="html",  # HTML / bold / italik / link vs burada aktif
+            parse_mode="html",
         )
         print(f"[OK] Fotoğraf {event.chat_id} -> {target_id}")
     except Exception as e:
         print("[HATA] Fotoğraf gönderilemedi:", e)
+
 
 
 ########################################

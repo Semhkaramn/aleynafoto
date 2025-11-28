@@ -277,6 +277,17 @@ def extract_photo_from_message(message):
 # MENÜ SİSTEMİ
 ########################################
 
+def is_callback_query(event):
+    """Event'in CallbackQuery olup olmadığını kontrol et"""
+    return hasattr(event, 'query')
+
+async def send_or_edit(event, text, buttons=None, parse_mode="markdown"):
+    """Event tipine göre edit veya reply kullan"""
+    if is_callback_query(event):
+        await event.edit(text, buttons=buttons, parse_mode=parse_mode)
+    else:
+        await event.reply(text, buttons=buttons, parse_mode=parse_mode)
+
 async def show_main_menu(event):
     """Ana menüyü göster"""
     text = (
@@ -294,7 +305,7 @@ async def show_main_menu(event):
         [Button.inline("❓ Yardım", b"menu_help")]
     ]
 
-    await event.reply(text, buttons=buttons, parse_mode="markdown")
+    await send_or_edit(event, text, buttons)
 
 
 async def show_channels_menu(event):
@@ -317,7 +328,7 @@ async def show_channels_menu(event):
         [Button.inline("◀️ Ana Menü", b"menu_main")]
     ]
 
-    await event.edit(text, buttons=buttons, parse_mode="markdown")
+    await send_or_edit(event, text, buttons)
 
 
 async def show_target_menu(event):
@@ -347,7 +358,7 @@ async def show_target_menu(event):
 
     buttons.append([Button.inline("◀️ Ana Menü", b"menu_main")])
 
-    await event.edit(text, buttons=buttons, parse_mode="markdown")
+    await send_or_edit(event, text, buttons)
 
 
 async def show_templates_menu(event):
@@ -375,7 +386,7 @@ async def show_templates_menu(event):
         [Button.inline("◀️ Ana Menü", b"menu_main")]
     ]
 
-    await event.edit(text, buttons=buttons, parse_mode="markdown")
+    await send_or_edit(event, text, buttons)
 
 
 async def show_banned_menu(event):
@@ -399,7 +410,7 @@ async def show_banned_menu(event):
         [Button.inline("◀️ Ana Menü", b"menu_main")]
     ]
 
-    await event.edit(text, buttons=buttons, parse_mode="markdown")
+    await send_or_edit(event, text, buttons)
 
 
 async def show_status_menu(event):
@@ -425,7 +436,7 @@ async def show_status_menu(event):
         [Button.inline("◀️ Ana Menü", b"menu_main")]
     ]
 
-    await event.edit(text, buttons=buttons, parse_mode="markdown")
+    await send_or_edit(event, text, buttons)
 
 
 async def show_help_menu(event):
@@ -458,7 +469,7 @@ async def show_help_menu(event):
         [Button.inline("◀️ Ana Menü", b"menu_main")]
     ]
 
-    await event.edit(text, buttons=buttons, parse_mode="markdown")
+    await send_or_edit(event, text, buttons)
 
 
 ########################################

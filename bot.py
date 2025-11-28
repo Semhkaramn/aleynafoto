@@ -4,7 +4,7 @@ from telethon import TelegramClient, events
 from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
 import asyncpg
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timezone
 
 load_dotenv()
 
@@ -21,6 +21,9 @@ user_states = {}
 
 # Debug modu
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+
+# Bot başlangıç zamanı - sadece bundan sonraki mesajları dinle
+bot_start_time = None
 
 
 ########################################
@@ -480,10 +483,14 @@ async def owner_commands(event):
             await event.reply("❌ Silinecek kanal yok!")
             return
         user_states[user_id] = {"action": "del_channel", "step": 1, "data": {}}
+
+        # Mevcut kanalları göster
+        channel_list = "\n".join([f"• `{c['id']}` - {c['title']}" for c in channels])
         await event.reply(
-            "🗑 **Dinleme Kanalı Silme**\n\n"
-            "Silmek istediğin kanalın kullanıcı adını veya ID'sini yaz.\n\n"
-            "_İptal: `iptal`_",
+            f"🗑 **Dinleme Kanalı Silme**\n\n"
+            f"**Mevcut Kanallar:**\n{channel_list}\n\n"
+            f"Silmek istediğin kanalın ID'sini veya kullanıcı adını yaz.\n\n"
+            f"_İptal: `iptal`_",
             parse_mode="markdown"
         )
         return
@@ -497,7 +504,9 @@ async def owner_commands(event):
         msg = "📡 **Dinlenen Kanallar:**\n\n"
         for c in channels:
             msg += f"• `{c['id']}` - {c['title'] or 'İsimsiz'}\n"
-        msg += f"\n**Toplam:** {len(channels)} kanal"
+        msg += f"\n**Toplam:** {len(channels)} kanal\n\n"
+        msg += "💡 **Not:** Sadece bu kanallara gelen YENİ fotoğraflar dinleniyor.\n"
+        msg += "Eski kanalı sil: `kanal sil`"
 
         await event.reply(msg, parse_mode="markdown")
         return
@@ -825,6 +834,12 @@ async def photo_listener(event):
     if event.is_private and event.sender_id == OWNER_ID:
         return
 
+    # Bot başlamadan önceki mesajları ignore et (sadece YENİ mesajları dinle)
+    if bot_start_time and event.message.date < bot_start_time:
+        if DEBUG:
+            log(f"⏭️ ESKİ MESAJ ATLANDI: {event.message.date} < {bot_start_time}", "DEBUG")
+        return
+
     # Tüm mesajları say
     stats["total_messages"] += 1
     stats["last_activity"] = datetime.now()
@@ -841,9 +856,8 @@ async def photo_listener(event):
 
     # Kanal kontrolü - normalize edilmiş ID'lerle
     if normalized_chat_id not in channel_ids:
-        if DEBUG:
-            log(f"⏭️ ATLANDI: {normalized_chat_id} dinlenen kanallarda yok", "DEBUG")
-            log(f"   Dinlenen kanallar: {channel_ids}", "DEBUG")
+        log(f"⏭️ ATLANDI: {normalized_chat_id} dinlenen kanallarda yok", "DEBUG")
+        log(f"   📋 Dinlenen kanallar: {channel_ids}", "DEBUG")
         return
 
     log(f"✅ KANAL DOĞRU: {normalized_chat_id} dinleniyor", "INFO")
@@ -917,12 +931,29 @@ async def photo_listener(event):
 ########################################
 
 async def main():
+    global bot_start_time
+
     log("Telegram'a bağlanılıyor...")
     await client.start()
     me = await client.get_me()
+
+    # Bot başlangıç zamanını kaydet - sadece bundan sonraki mesajları dinle
+    bot_start_time = datetime.now(timezone.utc)
+
+    # Dinlenen kanalları göster
+    channels = await get_channels()
+
     log(f"Giriş yapıldı: {me.id} | @{me.username or 'yok'}")
     log("=" * 50)
     log("🤖 Bot aktif! Yönetim için 'menü' yaz.")
+    log(f"⏰ Sadece YENİ mesajlar dinlenecek")
+    log(f"📡 Dinlenen kanal sayısı: {len(channels)}")
+    if channels:
+        log("📋 Dinlenen kanallar:")
+        for ch in channels:
+            log(f"   • {ch['id']} - {ch['title']}")
+    else:
+        log("⚠️  Henüz kanal eklenmemiş! 'kanal ekle' komutu ile kanal ekle.")
     log(f"Debug Mode: {DEBUG}")
     log("=" * 50)
 

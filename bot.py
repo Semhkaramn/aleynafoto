@@ -838,9 +838,11 @@ async def photo_listener(event):
 
     # Gelen mesajın chat_id'sini normalize et
     normalized_chat_id = normalize_channel_id(event.chat_id)
+    
+    # Sadece dinlenen kanallardaki mesajları DEBUG log'a yaz
+    if DEBUG and normalized_chat_id in channel_ids:
+        log(f"📨 Yeni mesaj (dinlenen kanal): Chat={event.chat_id} | MsgID={event.id}", "DEBUG")
 
-    # Log: Mesaj hangi kanaldan geldi
-    log(f"📨 Mesaj geldi: Chat ID={event.chat_id} | Normalize: {normalized_chat_id}")
 
     # Kanal kontrolü - normalize edilmiş ID'lerle
     if normalized_chat_id not in channel_ids:
@@ -924,9 +926,6 @@ async def main():
     log("Telegram'a bağlanılıyor...")
     await client.start()
     me = await client.get_me()
-
-    # Bot başlangıç zamanını kaydet - sadece bundan sonraki mesajları dinle
-    bot_start_time = datetime.now(timezone.utc)
 
     # Dinlenen kanalları göster
     channels = await get_channels()

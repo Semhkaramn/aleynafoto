@@ -25,6 +25,9 @@ DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 # Bot başlangıç zamanı - sadece bundan sonraki mesajları dinle
 bot_start_time = None
 
+# Database connection pool - ÖNEMLİ: Bağlantı sızıntısını önler
+db_pool = None
+
 
 ########################################
 # LOGGER
@@ -65,13 +68,33 @@ def normalize_channel_id(channel_id: int) -> int:
 # DB YARDIMCI FONKSİYONLAR
 ########################################
 
+async def init_db_pool():
+    """Veritabanı bağlantı havuzunu başlat"""
+    global db_pool
+    if db_pool is None:
+        db_pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=2,
+            max_size=10,
+            command_timeout=60
+        )
+        log("✅ Database connection pool oluşturuldu", "INFO")
+    return db_pool
+
+
 async def db_connect():
-    return await asyncpg.connect(DATABASE_URL)
+    """DEPRECATED: Pool kullan"""
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    return await db_pool.acquire()
 
 
 async def set_setting(key: str, value: str):
-    conn = await db_connect()
-    try:
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    async with db_pool.acquire() as conn:
         await conn.execute(
             """
             INSERT INTO settings(key, value)
@@ -81,17 +104,15 @@ async def set_setting(key: str, value: str):
             key,
             value,
         )
-    finally:
-        await conn.close()
 
 
 async def get_setting(key: str):
-    conn = await db_connect()
-    try:
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    async with db_pool.acquire() as conn:
         row = await conn.fetchrow("SELECT value FROM settings WHERE key = $1", key)
         return row["value"] if row else None
-    finally:
-        await conn.close()
 
 
 ########################################
@@ -102,8 +123,10 @@ async def add_channel(channel_id: int, title: str | None = None):
     # ID'yi normalize et
     channel_id = normalize_channel_id(channel_id)
 
-    conn = await db_connect()
-    try:
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    async with db_pool.acquire() as conn:
         await conn.execute(
             """
             INSERT INTO channels(channel_id, title)
@@ -114,28 +137,26 @@ async def add_channel(channel_id: int, title: str | None = None):
             title,
         )
         log(f"✅ DB'ye kaydedildi: {channel_id} ({title})", "INFO")
-    finally:
-        await conn.close()
 
 
 async def delete_channel(channel_id: int):
     # ID'yi normalize et
     channel_id = normalize_channel_id(channel_id)
 
-    conn = await db_connect()
-    try:
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM channels WHERE channel_id = $1", channel_id)
-    finally:
-        await conn.close()
 
 
 async def get_channels():
-    conn = await db_connect()
-    try:
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    async with db_pool.acquire() as conn:
         rows = await conn.fetch("SELECT channel_id, title FROM channels ORDER BY id")
         return [{"id": r["channel_id"], "title": r["title"]} for r in rows]
-    finally:
-        await conn.close()
 
 
 ########################################
@@ -143,8 +164,10 @@ async def get_channels():
 ########################################
 
 async def add_banned_word(word: str):
-    conn = await db_connect()
-    try:
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    async with db_pool.acquire() as conn:
         await conn.execute(
             """
             INSERT INTO banned_words(word)
@@ -153,25 +176,23 @@ async def add_banned_word(word: str):
             """,
             word.lower(),
         )
-    finally:
-        await conn.close()
 
 
 async def delete_banned_word(word: str):
-    conn = await db_connect()
-    try:
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM banned_words WHERE word = $1", word.lower())
-    finally:
-        await conn.close()
 
 
 async def get_banned_words():
-    conn = await db_connect()
-    try:
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    async with db_pool.acquire() as conn:
         rows = await conn.fetch("SELECT word FROM banned_words ORDER BY word")
         return [r["word"] for r in rows]
-    finally:
-        await conn.close()
 
 
 ########################################
@@ -179,8 +200,10 @@ async def get_banned_words():
 ########################################
 
 async def add_template(name: str, content: str):
-    conn = await db_connect()
-    try:
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    async with db_pool.acquire() as conn:
         await conn.execute(
             """
             INSERT INTO templates(name, content)
@@ -191,21 +214,21 @@ async def add_template(name: str, content: str):
             name,
             content,
         )
-    finally:
-        await conn.close()
 
 
 async def delete_template(name: str):
-    conn = await db_connect()
-    try:
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM templates WHERE name = $1", name)
-    finally:
-        await conn.close()
 
 
 async def list_templates():
-    conn = await db_connect()
-    try:
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    async with db_pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, name, content, is_active FROM templates ORDER BY id"
         )
@@ -218,31 +241,29 @@ async def list_templates():
             }
             for r in rows
         ]
-    finally:
-        await conn.close()
 
 
 async def set_active_template(name: str):
-    conn = await db_connect()
-    try:
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    async with db_pool.acquire() as conn:
         await conn.execute("UPDATE templates SET is_active = FALSE")
         await conn.execute(
             "UPDATE templates SET is_active = TRUE WHERE name = $1",
             name,
         )
-    finally:
-        await conn.close()
 
 
 async def get_active_template_content():
-    conn = await db_connect()
-    try:
+    global db_pool
+    if db_pool is None:
+        await init_db_pool()
+    async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT content FROM templates WHERE is_active = TRUE LIMIT 1"
         )
         return row["content"] if row else None
-    finally:
-        await conn.close()
 
 
 ########################################
@@ -838,7 +859,7 @@ async def photo_listener(event):
 
     # Gelen mesajın chat_id'sini normalize et
     normalized_chat_id = normalize_channel_id(event.chat_id)
-    
+
     # Sadece dinlenen kanallardaki mesajları DEBUG log'a yaz
     if DEBUG and normalized_chat_id in channel_ids:
         log(f"📨 Yeni mesaj (dinlenen kanal): Chat={event.chat_id} | MsgID={event.id}", "DEBUG")
@@ -920,6 +941,9 @@ async def photo_listener(event):
 
 async def main():
     global bot_start_time
+
+    log("Database connection pool başlatılıyor...")
+    await init_db_pool()
 
     log("Telegram'a bağlanılıyor...")
     await client.start()

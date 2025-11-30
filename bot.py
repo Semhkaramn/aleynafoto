@@ -109,6 +109,9 @@ async def dinleyici(event):
     if event.is_private:
         return
 
+        # Kaynak kanallardan değilse atla
+    if event.chat_id not in KAYNAK_KANALLAR:
+        return
     # DEBUG: Hangi kanaldan mesaj geldi?
     print(f"[DEBUG] Mesaj geldi -> Kanal: {event.chat_id} | #{event.id}")
 

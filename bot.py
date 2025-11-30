@@ -39,20 +39,52 @@ YASAK_KELIMELER = [
     "kayıt",
 ]
 
-islenen = set()      # Aynı mesajı 2 kez işlemeyi engeller
-bot_aktif = True     # /dur ve /devam için bot durumu
+islenen = set()
+bot_aktif = True
+
 
 ########################################
-# HEROKU KEEPALIVE (UYUMASIN DİYE)
+# HEROKU KEEPALIVE
 ########################################
 
 async def keepalive_loop():
     while True:
         try:
-            await asyncio.sleep(300)  # 5 dk'da bir çalışır
-            await client.get_me()     # ping
+            await asyncio.sleep(300)
+            await client.get_me()
+            print("[KEEPALIVE] Ping gönderildi.")
         except Exception as e:
             print("[KEEPALIVE HATA]", e)
+
+
+########################################
+# AUTO RECONNECT (KRAL BABASI)
+########################################
+
+async def reconnect():
+    while True:
+        try:
+            print("[RECONNECT] Bağlantı kopmuş, yeniden bağlanılıyor...")
+            await client.connect()
+
+            if await client.is_user_authorized():
+                print("[RECONNECT] Yeniden bağlanma başarılı!")
+                return
+            else:
+                print("[RECONNECT] Oturum yetkisi yok!")
+                await asyncio.sleep(5)
+
+        except Exception as e:
+            print("[RECONNECT HATA]", e)
+            await asyncio.sleep(5)
+
+
+# Telethon bağlantı kopunca otomatik olarak bu event'i fırlatır
+@client.on(events.Disconnected)
+async def disconnected_handler(event):
+    print("[UYARI] Telegram bağlantısı kesildi!")
+    await reconnect()
+
 
 ########################################
 # YARDIMCI FONKS.
@@ -91,6 +123,7 @@ def extract_photo(msg):
 
     return None
 
+
 ########################################
 # DUR / DEVAM KOMUTLARI
 ########################################
@@ -106,6 +139,7 @@ async def komut_devam(event):
     global bot_aktif
     bot_aktif = True
     await event.reply("▶ Bot devam ediyor.")
+
 
 ########################################
 # FOTOĞRAF DİNLEYİCİ
@@ -129,6 +163,7 @@ async def dinleyici(event):
     key = (event.chat_id, event.id)
     if key in islenen:
         return
+
     islenen.add(key)
 
     foto = extract_photo(event.message)
@@ -169,6 +204,7 @@ async def dinleyici(event):
         else:
             print("[HATA] Gönderim:", e)
 
+
 ########################################
 # MAIN
 ########################################
@@ -177,9 +213,11 @@ async def main():
     await client.start()
     print("Bot aktif!")
 
-    asyncio.create_task(keepalive_loop())  # Heroku uyumasın
+    asyncio.create_task(keepalive_loop())
+    asyncio.create_task(reconnect())  # Bağlantı giderse tekrar bağlanır
 
     await asyncio.Future()
+
 
 if __name__ == "__main__":
     client.loop.run_until_complete(main())

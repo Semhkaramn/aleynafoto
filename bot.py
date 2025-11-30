@@ -15,22 +15,36 @@ OWNER_ID = int(os.getenv("OWNER_ID", "5725763398"))
 client = TelegramClient(SESSION, API_ID, API_HASH)
 
 ########################################
-# AYARLAR
+# AYARLAR - HEPSİ BURADAN DÜZENLENİR
 ########################################
 
+# KANAL AYARLARI
 KAYNAK_KANALLAR = [
     -1001702869083,
     -1002214278617,
     -1001885502015,
-    -1002379522248
+    -1002379522248,
 ]
 
 HEDEF_KANAL = -1002560312226
 
-MESAJ_TASLAGI = """<b>Uyarı :</b>  Lütfen Kendinizi Üzmeyecek Miktarda Bahis Alınız!
+# MESAJ TASLAK AYARLARI
+TASLAK_SISTEMI_AKTIF = True  # True = Taslaklar sırayla, False = Rastgele taslak
+TASLAK_DEGISIM_SAYISI = 2    # Kaç foto başına taslak değişsin (örn: 2 = her 2 fotoda bir)
 
-<i>Güvenilir Sponsorlar için mocobey4.com</i>"""
+MESAJ_TASLAKLARI = [
+    # Taslak 1 (İlk 2 foto için)
+    """‼️2 ALANDAN BIZIM REFERANSTAN UYE OL MİN. 500TL KUPONU OYNA YATARSADA TUTARSADA BONUS BUY I KAP BENDEN ‼️
 
+🔴 HAFTALIK YATIRIM KAPSAMINDA HER ALAN ICIN 1 KERE FAYDALANABILIRSINIZ
+
+🟠<a href="https://cutt.ly/Ne5YHGAq">SUPERTOTO HEMEN KAYIT 1000TL ANINDA SENIN</a> 🟠
+
+🟠<a href="https://cutt.ly/deKcYP81">MATADOR HEMEN KAYIT 1000TL ANINDA SENIN</a>  🟠""",
+
+]
+
+# FİLTRE AYARLARI
 YASAK_KELIMELER = [
     "bonus",
     "fırsat",
@@ -38,8 +52,24 @@ YASAK_KELIMELER = [
     "kayıt",
 ]
 
+YASAK_KELIME_KONTROLU = True  # True = Yasak kelimeleri kontrol et, False = Kontrol etme
+
+# HASH KONTROLÜ
+AYNI_FOTO_KONTROLU = True     # True = Aynı fotoğrafı tekrar gönderme, False = Gönder
+FOTO_CACHE_LIMIT = 1000       # Kaç fotoğraf hatırlansın
+MESAJ_CACHE_LIMIT = 10000     # Kaç mesaj hatırlansın
+
+# RATE LIMITING
+GONDERIM_ARASI_BEKLE = 1      # Her gönderim arası kaç saniye bekle
+FLOOD_BEKLE = 30              # Flood hatası alınca kaç saniye bekle
+
+# KEEPALIVE
+KEEPALIVE_SURE = 180          # Kaç saniyede bir ping (180 = 3 dakika)
+
+# SİSTEM (DOKUNMAYIN)
 islenen = set()
 foto_hash_cache = set()
+gonderim_sayaci = 0  # Taslak seçimi için
 bot_aktif = True
 
 ########################################
@@ -49,12 +79,34 @@ bot_aktif = True
 async def keepalive_loop():
     while True:
         try:
-            await asyncio.sleep(180)
+            await asyncio.sleep(KEEPALIVE_SURE)
             await client.get_dialogs(limit=1)
             print(f"[KEEPALIVE] ✅ Ping - {datetime.now().strftime('%H:%M:%S')}")
         except Exception as e:
             print(f"[KEEPALIVE HATA] {e}")
             await asyncio.sleep(60)
+
+########################################
+# TASLAK SEÇİMİ
+########################################
+
+def taslak_sec():
+    """Sıradaki mesaj taslağını seç"""
+    global gonderim_sayaci
+
+    if not MESAJ_TASLAKLARI:
+        return "Taslak bulunamadı!"
+
+    if not TASLAK_SISTEMI_AKTIF:
+        # Rastgele taslak
+        import random
+        return random.choice(MESAJ_TASLAKLARI)
+
+    # Sıralı taslak sistemi
+    taslak_index = (gonderim_sayaci // TASLAK_DEGISIM_SAYISI) % len(MESAJ_TASLAKLARI)
+    gonderim_sayaci += 1
+
+    return MESAJ_TASLAKLARI[taslak_index]
 
 ########################################
 # FOTOĞRAF ÇIKART
@@ -71,9 +123,6 @@ def extract_photo(msg):
         if isinstance(msg.media, MessageMediaDocument):
             if msg.media.document.mime_type.startswith("image/"):
                 return msg.media
-
-        if hasattr(msg.media, "photo"):
-            return msg.media.photo
 
     return None
 
@@ -109,15 +158,12 @@ async def dinleyici(event):
     if event.is_private:
         return
 
-        # Kaynak kanallardan değilse atla
-    if event.chat_id not in KAYNAK_KANALLAR:
-        return
-    # DEBUG: Hangi kanaldan mesaj geldi?
-    print(f"[DEBUG] Mesaj geldi -> Kanal: {event.chat_id} | #{event.id}")
-
     # Kaynak kanallardan değilse atla
     if event.chat_id not in KAYNAK_KANALLAR:
         return
+
+    # DEBUG: Kaynak kanaldan mesaj geldi
+    print(f"[DEBUG] 📩 Mesaj geldi -> Kanal: {event.chat_id} | #{event.id}")
 
     # Mesaj kontrolü
     key = (event.chat_id, event.id)
@@ -125,7 +171,7 @@ async def dinleyici(event):
         return
     islenen.add(key)
 
-    if len(islenen) > 10000:
+    if len(islenen) > MESAJ_CACHE_LIMIT:
         islenen.clear()
 
     # Fotoğraf var mı?
@@ -134,36 +180,42 @@ async def dinleyici(event):
         return
 
     # Fotoğraf hash kontrolü
-    foto_id = getattr(foto, 'id', None)
-    if not foto_id and hasattr(foto, 'document'):
-        foto_id = getattr(foto.document, 'id', None)
+    if AYNI_FOTO_KONTROLU:
+        foto_id = getattr(foto, 'id', None)
+        if not foto_id and hasattr(foto, 'document'):
+            foto_id = getattr(foto.document, 'id', None)
 
-    if foto_id:
-        if foto_id in foto_hash_cache:
-            print(f"[ATLA] ⏭ Aynı fotoğraf (ID: {foto_id})")
-            return
-        foto_hash_cache.add(foto_id)
+        if foto_id:
+            if foto_id in foto_hash_cache:
+                print(f"[ATLA] ⏭ Aynı fotoğraf (ID: {foto_id})")
+                return
+            foto_hash_cache.add(foto_id)
 
-        if len(foto_hash_cache) > 1000:
-            foto_hash_cache.clear()
+            if len(foto_hash_cache) > FOTO_CACHE_LIMIT:
+                foto_hash_cache.clear()
 
     # Yasak kelime kontrolü
-    caption = (event.message.message or "").lower()
-    for kelime in YASAK_KELIMELER:
-        if kelime in caption:
-            print(f"[ATLA] ⚠️ Yasak kelime: {kelime}")
-            return
+    if YASAK_KELIME_KONTROLU:
+        caption = (event.message.message or "").lower()
+        for kelime in YASAK_KELIMELER:
+            if kelime in caption:
+                print(f"[ATLA] ⚠️ Yasak kelime: {kelime}")
+                return
+
+    # Taslak seç
+    mesaj_taslagi = taslak_sec()
+    taslak_no = ((gonderim_sayaci - 1) // TASLAK_DEGISIM_SAYISI) % len(MESAJ_TASLAKLARI) + 1
 
     # Gönder
     try:
         await client.send_file(
             HEDEF_KANAL,
             file=foto,
-            caption=MESAJ_TASLAGI,
+            caption=mesaj_taslagi,
             parse_mode="html"
         )
-        print(f"[OK] ✅ Foto gönderildi | Kanal: {event.chat_id} | #{event.id} | {datetime.now().strftime('%H:%M:%S')}")
-        await asyncio.sleep(1)
+        print(f"[OK] ✅ Foto gönderildi | Taslak #{taslak_no} | Kanal: {event.chat_id} | #{event.id} | {datetime.now().strftime('%H:%M:%S')}")
+        await asyncio.sleep(GONDERIM_ARASI_BEKLE)
 
     except Exception as e:
         err = str(e).lower()
@@ -176,18 +228,18 @@ async def dinleyici(event):
                 await client.send_file(
                     HEDEF_KANAL,
                     file=data,
-                    caption=MESAJ_TASLAGI,
+                    caption=mesaj_taslagi,
                     parse_mode="html"
                 )
-                print(f"[OK] ✅ Protected çözüldü | #{event.id}")
-                await asyncio.sleep(1)
+                print(f"[OK] ✅ Protected çözüldü | Taslak #{taslak_no} | #{event.id}")
+                await asyncio.sleep(GONDERIM_ARASI_BEKLE)
             except Exception as e2:
                 print(f"[HATA] ❌ Protected indirilemedi: {e2}")
 
         # Flood
         elif "flood" in err or "wait" in err:
-            print(f"[UYARI] ⚠️ Flood - 30 sn bekleniyor...")
-            await asyncio.sleep(30)
+            print(f"[UYARI] ⚠️ Flood - {FLOOD_BEKLE} sn bekleniyor...")
+            await asyncio.sleep(FLOOD_BEKLE)
 
         else:
             print(f"[HATA] ❌ {e}")
@@ -213,7 +265,13 @@ async def main():
             for kanal in KAYNAK_KANALLAR:
                 print(f"       - {kanal}")
             print(f"[INFO] Hedef: {HEDEF_KANAL}")
-            print(f"[INFO] Keepalive: 3 dakika\n")
+            print(f"\n[TASLAK] 📝 Taslak sistemi: {'AKTIF ✅' if TASLAK_SISTEMI_AKTIF else 'RASTGELE 🎲'}")
+            print(f"[TASLAK] 📊 Toplam taslak: {len(MESAJ_TASLAKLARI)} adet")
+            print(f"[TASLAK] 🔄 Her {TASLAK_DEGISIM_SAYISI} fotoda bir taslak değişir")
+            print(f"\n[FİLTRE] ⚙️ Yasak kelime kontrolü: {'AÇIK ✅' if YASAK_KELIME_KONTROLU else 'KAPALI ❌'}")
+            print(f"[FİLTRE] ⚙️ Aynı foto kontrolü: {'AÇIK ✅' if AYNI_FOTO_KONTROLU else 'KAPALI ❌'}")
+            print(f"[FİLTRE] ⚙️ Gönderim arası: {GONDERIM_ARASI_BEKLE}s | Flood: {FLOOD_BEKLE}s")
+            print(f"[FİLTRE] ⚙️ Keepalive: {KEEPALIVE_SURE}s ({KEEPALIVE_SURE//60} dakika)\n")
 
             yeniden_baglanti = 0
 

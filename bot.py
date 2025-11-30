@@ -828,12 +828,6 @@ async def photo_listener(event):
     if event.is_private and event.sender_id == OWNER_ID:
         return
 
-    # Bot başlamadan önceki mesajları ignore et (sadece YENİ mesajları dinle)
-    if bot_start_time and event.message.date < bot_start_time:
-        if DEBUG:
-            log(f"⏭️ ESKİ MESAJ ATLANDI: {event.message.date} < {bot_start_time}", "DEBUG")
-        return
-
     # Tüm mesajları say
     stats["total_messages"] += 1
     stats["last_activity"] = datetime.now()

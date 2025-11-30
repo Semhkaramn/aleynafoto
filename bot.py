@@ -39,8 +39,20 @@ YASAK_KELIMELER = [
     "kayıt",
 ]
 
-# Bu set mesajların tekrar işlenmesini engeller
-islenen = set()
+islenen = set()      # Aynı mesajı 2 kez işlemeyi engeller
+bot_aktif = True     # /dur ve /devam için bot durumu
+
+########################################
+# HEROKU KEEPALIVE (UYUMASIN DİYE)
+########################################
+
+async def keepalive_loop():
+    while True:
+        try:
+            await asyncio.sleep(300)  # 5 dk'da bir çalışır
+            await client.get_me()     # ping
+        except Exception as e:
+            print("[KEEPALIVE HATA]", e)
 
 ########################################
 # YARDIMCI FONKS.
@@ -80,13 +92,31 @@ def extract_photo(msg):
     return None
 
 ########################################
+# DUR / DEVAM KOMUTLARI
+########################################
+
+@client.on(events.NewMessage(from_users=OWNER_ID, pattern="^(dur|stop)$"))
+async def komut_dur(event):
+    global bot_aktif
+    bot_aktif = False
+    await event.reply("⏸ Bot durduruldu.")
+
+@client.on(events.NewMessage(from_users=OWNER_ID, pattern="^(devam|start)$"))
+async def komut_devam(event):
+    global bot_aktif
+    bot_aktif = True
+    await event.reply("▶ Bot devam ediyor.")
+
+########################################
 # FOTOĞRAF DİNLEYİCİ
 ########################################
 
 @client.on(events.NewMessage)
 async def dinleyici(event):
 
-    # Private mesajları işleme
+    if not bot_aktif:
+        return
+
     if event.is_private and event.sender_id == OWNER_ID:
         return
 
@@ -96,7 +126,6 @@ async def dinleyici(event):
     if cid_norm not in kaynaklar:
         return
 
-    # Aynı mesajı 2 kere çalıştırma
     key = (event.chat_id, event.id)
     if key in islenen:
         return
@@ -111,7 +140,6 @@ async def dinleyici(event):
         if w in caption:
             return
 
-    # Tek sefer gönderim bloğu
     try:
         await client.send_file(
             HEDEF_KANAL,
@@ -124,11 +152,9 @@ async def dinleyici(event):
     except Exception as e:
         err = str(e).lower()
 
-        # Protected çözümü
         if "protected" in err or "can't forward" in err:
             try:
                 data = await client.download_media(foto, file=bytes)
-
                 await client.send_file(
                     HEDEF_KANAL,
                     file=data,
@@ -138,10 +164,10 @@ async def dinleyici(event):
                 print(f"[OK] Protected çözüldü -> {event.id}")
 
             except Exception as e2:
-                print(f"[HATA] Protected çözülemedi: {e2}")
+                print("[HATA Protected]", e2)
 
         else:
-            print(f"[HATA] Gönderim hatası: {e}")
+            print("[HATA] Gönderim:", e)
 
 ########################################
 # MAIN
@@ -150,6 +176,8 @@ async def dinleyici(event):
 async def main():
     await client.start()
     print("Bot aktif!")
+
+    asyncio.create_task(keepalive_loop())  # Heroku uyumasın
 
     await asyncio.Future()
 

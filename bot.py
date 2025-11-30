@@ -8,7 +8,7 @@ from datetime import datetime
 load_dotenv()
 
 API_ID = int(os.getenv("API_ID", "22758433"))
-API_HASH = os.getenv("API_HASH", "63ea3a90dec2b1926f728fdd2db84e33"))
+API_HASH = os.getenv("API_HASH", "63ea3a90dec2b1926f728fdd2db84e33")
 SESSION = os.getenv("SESSION", "ejder.session")
 OWNER_ID = int(os.getenv("OWNER_ID", "5725763398"))
 
@@ -32,51 +32,36 @@ MESAJ_TASLAGI = """<b>Uyarı :</b>  Lütfen Kendinizi Üzmeyecek Miktarda Bahis 
 
 <i>Güvenilir Sponsorlar için mocobey4.com</i>"""
 
-YASAK_KELIMELER = ["bonus","fırsat","freespin","kayıt"]
+YASAK_KELIMELER = [
+    "bonus",
+    "fırsat",
+    "freespin",
+    "kayıt",
+]
 
-islenen = set()
-bot_aktif = True
-
+islenen = set()      # Aynı mesajı 2 kez işlemeyi engeller
+bot_aktif = True     # /dur ve /devam için bot durumu
 
 ########################################
-# KEEPALIVE
+# HEROKU KEEPALIVE (İYİLEŞTİRİLDİ)
 ########################################
 
 async def keepalive_loop():
+    """Her 3 dakikada bir ping atar - Heroku uyumasın"""
     while True:
-        await asyncio.sleep(300)
         try:
-            await client.get_me()
-            print("[PING] Heroku uyandırıldı.")
-        except:
-            pass
-
-
-########################################
-# AUTO RECONNECT (Gerçek çalışan sistem)
-########################################
-
-async def ensure_connection():
-    while True:
-        await asyncio.sleep(5)
-        try:
-            if not client.is_connected():
-                print("[RECONNECT] Telegram bağlantısı kopmuş, yeniden bağlanılıyor...")
-                await client.connect()
-
-                if await client.is_user_authorized():
-                    print("[RECONNECT] Yeniden bağlandı!")
-                else:
-                    print("[RECONNECT] Yetki yok! Session bozuk olabilir.")
+            await asyncio.sleep(180)  # 3 dk (daha sık kontrol)
+            await client.get_dialogs(limit=1)  # Daha hafif işlem
+            print(f"[KEEPALIVE] ✅ Ping OK - {datetime.now().strftime('%H:%M:%S')}")
         except Exception as e:
-            print("[RECONNECT HATA]", e)
-
+            print(f"[KEEPALIVE HATA] ❌ {e}")
+            await asyncio.sleep(60)  # Hata olursa 1 dk bekle
 
 ########################################
 # YARDIMCI FONKS.
 ########################################
 
-def normalize_channel_id(cid):
+def normalize_channel_id(cid: int) -> int:
     cid = int(cid)
     if str(cid).startswith("-100"):
         return cid
@@ -93,18 +78,21 @@ def extract_photo(msg):
     if msg.media:
         if isinstance(msg.media, MessageMediaPhoto):
             return msg.media.photo
+
         if isinstance(msg.media, MessageMediaDocument):
             mime = getattr(msg.media.document, "mime_type", "")
             if mime.startswith("image/"):
                 return msg.media
+
         if hasattr(msg.media, "photo"):
             return msg.media.photo
+
         if hasattr(msg.media, "webpage"):
             wp = msg.media.webpage
             if hasattr(wp, "photo") and wp.photo:
                 return wp.photo
-    return None
 
+    return None
 
 ########################################
 # DUR / DEVAM KOMUTLARI
@@ -115,28 +103,32 @@ async def komut_dur(event):
     global bot_aktif
     bot_aktif = False
     await event.reply("⏸ Bot durduruldu.")
+    print(f"[KOMUT] ⏸ Bot durduruldu - {datetime.now().strftime('%H:%M:%S')}")
 
 @client.on(events.NewMessage(from_users=OWNER_ID, pattern="^(devam|start)$"))
 async def komut_devam(event):
     global bot_aktif
     bot_aktif = True
     await event.reply("▶ Bot devam ediyor.")
-
+    print(f"[KOMUT] ▶ Bot devam ediyor - {datetime.now().strftime('%H:%M:%S')}")
 
 ########################################
-# FOTO DINLEME
+# FOTOĞRAF DİNLEYİCİ (İYİLEŞTİRİLDİ)
 ########################################
 
 @client.on(events.NewMessage)
 async def dinleyici(event):
+
     if not bot_aktif:
         return
 
     if event.is_private and event.sender_id == OWNER_ID:
         return
 
-    cid = normalize_channel_id(event.chat_id)
-    if cid not in [normalize_channel_id(x) for x in KAYNAK_KANALLAR]:
+    cid_norm = normalize_channel_id(event.chat_id)
+    kaynaklar = [normalize_channel_id(ch) for ch in KAYNAK_KANALLAR]
+
+    if cid_norm not in kaynaklar:
         return
 
     key = (event.chat_id, event.id)
@@ -149,47 +141,102 @@ async def dinleyici(event):
         return
 
     caption = (event.message.message or "").lower()
-    if any(w in caption for w in YASAK_KELIMELER):
-        return
+    for w in YASAK_KELIMELER:
+        if w in caption:
+            print(f"[ATLA] Yasak kelime bulundu: {w}")
+            return
 
     try:
         await client.send_file(
             HEDEF_KANAL,
-            foto,
+            file=foto,
             caption=MESAJ_TASLAGI,
             parse_mode="html"
         )
-        print(f"[OK] Foto gönderildi -> {event.id}")
+        print(f"[OK] ✅ Foto gönderildi -> Mesaj #{event.id} | {datetime.now().strftime('%H:%M:%S')}")
+
+        # Rate limiting: Her gönderim arası 1 saniye bekle
+        await asyncio.sleep(1)
 
     except Exception as e:
-        if "protected" in str(e).lower():
+        err = str(e).lower()
+
+        if "protected" in err or "can't forward" in err:
             try:
+                print(f"[INFO] Protected içerik algılandı, indiriliyor...")
                 data = await client.download_media(foto, file=bytes)
                 await client.send_file(
                     HEDEF_KANAL,
-                    data,
+                    file=data,
                     caption=MESAJ_TASLAGI,
                     parse_mode="html"
                 )
-                print(f"[OK] Protected çözüldü -> {event.id}")
-            except Exception as e2:
-                print("[HATA Protected]", e2)
-        else:
-            print("[HATA] Gönderim:", e)
+                print(f"[OK] ✅ Protected çözüldü -> #{event.id}")
+                await asyncio.sleep(1)  # Rate limiting
 
+            except Exception as e2:
+                print(f"[HATA] ❌ Protected indirilemedi: {e2}")
+
+        elif "flood" in err or "wait" in err:
+            print(f"[UYARI] ⚠️ Telegram rate limit - 30 sn bekleniyor...")
+            await asyncio.sleep(30)
+
+        else:
+            print(f"[HATA] ❌ Gönderim hatası: {e}")
 
 ########################################
-# MAIN
+# MAIN (OTOMATİK YENİDEN BAĞLANMA)
 ########################################
 
 async def main():
-    await client.start()
-    print("Bot aktif!")
+    """Otomatik yeniden bağlanma ile ana loop"""
+    yeniden_baglanti_sayisi = 0
 
-    asyncio.create_task(keepalive_loop())
-    asyncio.create_task(ensure_connection())   # <<< GERÇEK RECONNECT BURADA
+    while True:
+        try:
+            print(f"\n{'='*50}")
+            print(f"[BAŞLATILIYOR] Bot başlatılıyor...")
+            print(f"{'='*50}\n")
 
-    await asyncio.Future()
+            await client.start()
+            print(f"[OK] ✅ Bot aktif! | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"[INFO] İzlenen kanal sayısı: {len(KAYNAK_KANALLAR)}")
+            print(f"[INFO] Hedef kanal: {HEDEF_KANAL}")
+            print(f"[INFO] Keepalive: Her 3 dakikada bir\n")
+
+            yeniden_baglanti_sayisi = 0  # Başarılı bağlantıda sıfırla
+
+            # Keepalive task'ını başlat
+            asyncio.create_task(keepalive_loop())
+
+            # Sonsuz döngü - bot kapanana kadar çalışır
+            await asyncio.Future()
+
+        except KeyboardInterrupt:
+            print("\n[DURDURULDU] ⏹ Bot manuel olarak durduruldu.")
+            break
+
+        except Exception as e:
+            yeniden_baglanti_sayisi += 1
+            print(f"\n{'='*50}")
+            print(f"[HATA] ❌ Bağlantı koptu: {e}")
+            print(f"[INFO] Yeniden bağlanma denemesi: {yeniden_baglanti_sayisi}")
+            print(f"{'='*50}\n")
+
+            # Bekleme süresi: Her denemede artan süre (max 60 sn)
+            bekleme_suresi = min(10 * yeniden_baglanti_sayisi, 60)
+            print(f"[BEKLE] ⏳ {bekleme_suresi} saniye sonra yeniden başlatılıyor...\n")
+
+            await asyncio.sleep(bekleme_suresi)
+
+            # Client'i yeniden başlat
+            try:
+                await client.disconnect()
+            except:
+                pass
 
 if __name__ == "__main__":
-    client.loop.run_until_complete(main())
+    try:
+        client.loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("\n[SON] Program kapatıldı.")

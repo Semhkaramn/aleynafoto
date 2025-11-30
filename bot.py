@@ -8,7 +8,7 @@ from datetime import datetime
 load_dotenv()
 
 API_ID = int(os.getenv("API_ID", "22758433"))
-API_HASH = os.getenv("API_HASH", "63ea3a90dec2b1926f728fdd2db84e33")
+API_HASH = os.getenv("API_HASH", "63ea3a90dec2b1926f728fdd2db84e33"))
 SESSION = os.getenv("SESSION", "ejder.session")
 OWNER_ID = int(os.getenv("OWNER_ID", "5725763398"))
 
@@ -32,65 +32,51 @@ MESAJ_TASLAGI = """<b>Uyarı :</b>  Lütfen Kendinizi Üzmeyecek Miktarda Bahis 
 
 <i>Güvenilir Sponsorlar için mocobey4.com</i>"""
 
-YASAK_KELIMELER = [
-    "bonus",
-    "fırsat",
-    "freespin",
-    "kayıt",
-]
+YASAK_KELIMELER = ["bonus","fırsat","freespin","kayıt"]
 
 islenen = set()
 bot_aktif = True
 
 
 ########################################
-# HEROKU KEEPALIVE
+# KEEPALIVE
 ########################################
 
 async def keepalive_loop():
     while True:
+        await asyncio.sleep(300)
         try:
-            await asyncio.sleep(300)
             await client.get_me()
-            print("[KEEPALIVE] Ping gönderildi.")
-        except Exception as e:
-            print("[KEEPALIVE HATA]", e)
+            print("[PING] Heroku uyandırıldı.")
+        except:
+            pass
 
 
 ########################################
-# AUTO RECONNECT (KRAL BABASI)
+# AUTO RECONNECT (Gerçek çalışan sistem)
 ########################################
 
-async def reconnect():
+async def ensure_connection():
     while True:
+        await asyncio.sleep(5)
         try:
-            print("[RECONNECT] Bağlantı kopmuş, yeniden bağlanılıyor...")
-            await client.connect()
+            if not client.is_connected():
+                print("[RECONNECT] Telegram bağlantısı kopmuş, yeniden bağlanılıyor...")
+                await client.connect()
 
-            if await client.is_user_authorized():
-                print("[RECONNECT] Yeniden bağlanma başarılı!")
-                return
-            else:
-                print("[RECONNECT] Oturum yetkisi yok!")
-                await asyncio.sleep(5)
-
+                if await client.is_user_authorized():
+                    print("[RECONNECT] Yeniden bağlandı!")
+                else:
+                    print("[RECONNECT] Yetki yok! Session bozuk olabilir.")
         except Exception as e:
             print("[RECONNECT HATA]", e)
-            await asyncio.sleep(5)
-
-
-# Telethon bağlantı kopunca otomatik olarak bu event'i fırlatır
-@client.on(events.Disconnected)
-async def disconnected_handler(event):
-    print("[UYARI] Telegram bağlantısı kesildi!")
-    await reconnect()
 
 
 ########################################
 # YARDIMCI FONKS.
 ########################################
 
-def normalize_channel_id(cid: int) -> int:
+def normalize_channel_id(cid):
     cid = int(cid)
     if str(cid).startswith("-100"):
         return cid
@@ -107,20 +93,16 @@ def extract_photo(msg):
     if msg.media:
         if isinstance(msg.media, MessageMediaPhoto):
             return msg.media.photo
-
         if isinstance(msg.media, MessageMediaDocument):
             mime = getattr(msg.media.document, "mime_type", "")
             if mime.startswith("image/"):
                 return msg.media
-
         if hasattr(msg.media, "photo"):
             return msg.media.photo
-
         if hasattr(msg.media, "webpage"):
             wp = msg.media.webpage
             if hasattr(wp, "photo") and wp.photo:
                 return wp.photo
-
     return None
 
 
@@ -142,28 +124,24 @@ async def komut_devam(event):
 
 
 ########################################
-# FOTOĞRAF DİNLEYİCİ
+# FOTO DINLEME
 ########################################
 
 @client.on(events.NewMessage)
 async def dinleyici(event):
-
     if not bot_aktif:
         return
 
     if event.is_private and event.sender_id == OWNER_ID:
         return
 
-    cid_norm = normalize_channel_id(event.chat_id)
-    kaynaklar = [normalize_channel_id(ch) for ch in KAYNAK_KANALLAR]
-
-    if cid_norm not in kaynaklar:
+    cid = normalize_channel_id(event.chat_id)
+    if cid not in [normalize_channel_id(x) for x in KAYNAK_KANALLAR]:
         return
 
     key = (event.chat_id, event.id)
     if key in islenen:
         return
-
     islenen.add(key)
 
     foto = extract_photo(event.message)
@@ -171,36 +149,31 @@ async def dinleyici(event):
         return
 
     caption = (event.message.message or "").lower()
-    for w in YASAK_KELIMELER:
-        if w in caption:
-            return
+    if any(w in caption for w in YASAK_KELIMELER):
+        return
 
     try:
         await client.send_file(
             HEDEF_KANAL,
-            file=foto,
+            foto,
             caption=MESAJ_TASLAGI,
             parse_mode="html"
         )
         print(f"[OK] Foto gönderildi -> {event.id}")
 
     except Exception as e:
-        err = str(e).lower()
-
-        if "protected" in err or "can't forward" in err:
+        if "protected" in str(e).lower():
             try:
                 data = await client.download_media(foto, file=bytes)
                 await client.send_file(
                     HEDEF_KANAL,
-                    file=data,
+                    data,
                     caption=MESAJ_TASLAGI,
                     parse_mode="html"
                 )
                 print(f"[OK] Protected çözüldü -> {event.id}")
-
             except Exception as e2:
                 print("[HATA Protected]", e2)
-
         else:
             print("[HATA] Gönderim:", e)
 
@@ -214,10 +187,9 @@ async def main():
     print("Bot aktif!")
 
     asyncio.create_task(keepalive_loop())
-    asyncio.create_task(reconnect())  # Bağlantı giderse tekrar bağlanır
+    asyncio.create_task(ensure_connection())   # <<< GERÇEK RECONNECT BURADA
 
     await asyncio.Future()
-
 
 if __name__ == "__main__":
     client.loop.run_until_complete(main())

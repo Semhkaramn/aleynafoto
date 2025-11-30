@@ -50,6 +50,7 @@ YASAK_KELIMELER = [
     "fırsat",
     "freespin",
     "kayıt",
+    "harley",
 ]
 
 YASAK_KELIME_KONTROLU = True  # True = Yasak kelimeleri kontrol et, False = Kontrol etme

@@ -846,8 +846,6 @@ async def photo_listener(event):
 
     # Kanal kontrolü - normalize edilmiş ID'lerle
     if normalized_chat_id not in channel_ids:
-        log(f"⏭️ ATLANDI: {normalized_chat_id} dinlenen kanallarda yok", "DEBUG")
-        log(f"   📋 Dinlenen kanallar: {channel_ids}", "DEBUG")
         return
 
     log(f"✅ KANAL DOĞRU: {normalized_chat_id} dinleniyor", "INFO")

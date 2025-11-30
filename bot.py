@@ -40,6 +40,7 @@ YASAK_KELIMELER = [
 ]
 
 islenen = set()      # Aynı mesajı 2 kez işlemeyi engeller
+foto_hash_cache = set()  # Aynı fotoğrafı 2 kez göndermemeyi engeller
 bot_aktif = True     # /dur ve /devam için bot durumu
 
 ########################################
@@ -116,7 +117,7 @@ async def komut_devam(event):
 # FOTOĞRAF DİNLEYİCİ (İYİLEŞTİRİLDİ)
 ########################################
 
-@client.on(events.NewMessage)
+@client.on(events.NewMessage(incoming=True, func=lambda e: not e.out))
 async def dinleyici(event):
 
     if not bot_aktif:
@@ -131,19 +132,43 @@ async def dinleyici(event):
     if cid_norm not in kaynaklar:
         return
 
-    key = (event.chat_id, event.id)
+    # Aynı mesajı 2 kez işleme
+    key = (cid_norm, event.id)
     if key in islenen:
+        print(f"[ATLA] ⏭ Mesaj zaten işlendi: Kanal {cid_norm}, Mesaj #{event.id}")
         return
     islenen.add(key)
+
+    # Cache temizliği
+    if len(islenen) > 10000:
+        islenen.clear()
+        print("[INFO] 🧹 İşlenen mesaj cache'i temizlendi")
 
     foto = extract_photo(event.message)
     if not foto:
         return
 
+    # Fotoğraf hash kontrolü - aynı fotoğrafı tekrar gönderme
+    foto_id = None
+    if hasattr(foto, 'id'):
+        foto_id = foto.id
+    elif hasattr(foto, 'document') and hasattr(foto.document, 'id'):
+        foto_id = foto.document.id
+
+    if foto_id:
+        if foto_id in foto_hash_cache:
+            print(f"[ATLA] ⏭ Aynı fotoğraf zaten gönderildi (ID: {foto_id})")
+            return
+        foto_hash_cache.add(foto_id)
+
+        # Cache'i temizle (son 1000 fotoğraf)
+        if len(foto_hash_cache) > 1000:
+            foto_hash_cache.clear()
+
     caption = (event.message.message or "").lower()
     for w in YASAK_KELIMELER:
         if w in caption:
-            print(f"[ATLA] Yasak kelime bulundu: {w}")
+            print(f"[ATLA] ⚠️ Yasak kelime bulundu: {w}")
             return
 
     try:
@@ -153,7 +178,7 @@ async def dinleyici(event):
             caption=MESAJ_TASLAGI,
             parse_mode="html"
         )
-        print(f"[OK] ✅ Foto gönderildi -> Mesaj #{event.id} | {datetime.now().strftime('%H:%M:%S')}")
+        print(f"[OK] ✅ Foto gönderildi -> Kaynak: {cid_norm} | Mesaj #{event.id} | {datetime.now().strftime('%H:%M:%S')}")
 
         # Rate limiting: Her gönderim arası 1 saniye bekle
         await asyncio.sleep(1)
@@ -171,7 +196,7 @@ async def dinleyici(event):
                     caption=MESAJ_TASLAGI,
                     parse_mode="html"
                 )
-                print(f"[OK] ✅ Protected çözüldü -> #{event.id}")
+                print(f"[OK] ✅ Protected çözüldü -> Kaynak: {cid_norm} | Mesaj #{event.id}")
                 await asyncio.sleep(1)  # Rate limiting
 
             except Exception as e2:

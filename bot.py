@@ -24,6 +24,10 @@ KAYNAK_KANALLAR = [
     -1002214278617,
     -1001885502015,
     -1002379522248,
+    -1001238175187,
+    -1001859917023,
+    -1002086386627,
+    -1001717578737,
 ]
 
 HEDEF_KANAL = -1002560312226
@@ -51,6 +55,12 @@ YASAK_KELIMELER = [
     "freespin",
     "kayıt",
     "harley",
+    "son",
+    "oran",
+    "abone",
+    "ÜCRETSİZ",
+    "Üye",
+    "çekim",
 ]
 
 YASAK_KELIME_KONTROLU = True  # True = Yasak kelimeleri kontrol et, False = Kontrol etme

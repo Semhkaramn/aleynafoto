@@ -67,7 +67,7 @@ MESAJ_TASLAKLARI = [
 
 🟠<a href="https://cutt.ly/0twwJlgt"><b>DODO HEMEN KAYIT 1000TL ANINDA SENIN</b></a> 🟠
 
-🟠<a href="https://t2m.io/mocoo"><b>AMG BAHIS HEMEN KAYIT 500TL ANINDA CEBINDE</b></a>  🟠""",
+🟠<a href="https://t.ly/mocolevant"><b>CASINO HEVANT SENDE HEMEN GEL SENDE KAZAN</b></a>  🟠""",
 
 ]
 

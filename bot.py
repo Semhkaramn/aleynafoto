@@ -49,9 +49,9 @@ MESAJ_TASLAKLARI = [
 
 🔴 HAFTALIK YATIRIM KAPSAMINDA HER ALAN ICIN 1 KERE FAYDALANABILIRSINIZ
 
-🟠<a href="https://t1.t2m.io/mocobey"><b>NORA HEMEN KAYIT 15000TL HOSGELDIN SENIN</b></a> 🟠
+🟠<a href="https://t2m.io/teeogiris"><b>AMG BAHIS HEMEN KAYIT 333FS ANINDA SENIN</b></a> 🟠
 
-🟠<a href="https://cutt.ly/orismocobey"><b>ORİS HEMEN KAYIT 15000TL ANINDA CEBINDE</b></a>  🟠""",
+🟠<a href="https://t2m.io/teoogiris"><b>MERSO HEMEN KATIL 444FS ANINDA SENIN</b></a>  🟠""",
 
     """‼️2 ALANDAN BIZIM REFERANSTAN UYE OL MİN. 500TL KUPONU OYNA YATARSADA TUTARSADA BONUS BUY I KAP BENDEN ‼️
 

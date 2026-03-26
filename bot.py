@@ -4,11 +4,177 @@ import json
 import re
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument, MessageEntityCustomEmoji
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
 from datetime import datetime
 import asyncpg
+
+# ═══════════════════════════════════════════════════════════════
+# PREMIUM EMOJİ YARDIMCI FONKSİYONLARI
+# ═══════════════════════════════════════════════════════════════
+
+def mesaj_to_html_with_premium(message):
+    """
+    Mesajı premium emoji'ler dahil HTML formatına çevirir.
+    Premium emoji'ler <emoji id="123456">emoji</emoji> formatında saklanır.
+    """
+    if not message.entities:
+        return message.text or ""
+
+    text = message.text or ""
+    entities = sorted(message.entities, key=lambda e: e.offset, reverse=True)
+
+    for entity in entities:
+        start = entity.offset
+        end = entity.offset + entity.length
+        entity_text = text[start:end]
+
+        if isinstance(entity, MessageEntityCustomEmoji):
+            # Premium emoji - özel tag ile sakla
+            replacement = f'<emoji id="{entity.document_id}">{entity_text}</emoji>'
+            text = text[:start] + replacement + text[end:]
+
+    return text
+
+def parse_premium_emoji_html(html_text):
+    """
+    HTML'den premium emoji tag'lerini parse eder.
+    Returns: (clean_text, entities_list)
+    """
+    import re
+
+    entities = []
+    result_text = ""
+    last_end = 0
+
+    pattern = r'<emoji id="(\d+)">(.+?)</emoji>'
+
+    for match in re.finditer(pattern, html_text):
+        # Match'ten önceki normal metni ekle
+        result_text += html_text[last_end:match.start()]
+
+        document_id = int(match.group(1))
+        emoji_text = match.group(2)
+
+        # Entity oluştur
+        entities.append({
+            'type': 'custom_emoji',
+            'offset': len(result_text),
+            'length': len(emoji_text),
+            'document_id': document_id
+        })
+
+        result_text += emoji_text
+        last_end = match.end()
+
+    # Kalan metni ekle
+    result_text += html_text[last_end:]
+
+    return result_text, entities
+
+async def send_with_premium_emoji(client, chat_id, file, caption_html, parse_mode="html"):
+    """
+    Premium emoji'li caption ile dosya gönderir.
+    HTML formatlaması (bold, italic vs.) ve premium emoji'leri birleştirir.
+    """
+    from telethon.tl.types import (
+        MessageEntityCustomEmoji, MessageEntityBold, MessageEntityItalic,
+        MessageEntityCode, MessageEntityPre, MessageEntityTextUrl,
+        MessageEntityUnderline, MessageEntityStrike
+    )
+
+    # Premium emoji tag'lerini parse et
+    clean_text, emoji_entities = parse_premium_emoji_html(caption_html)
+
+    # HTML'deki diğer formatları da parse et
+    # Önce premium emoji tag'lerini kaldır
+    html_without_emoji = re.sub(r'<emoji id="\d+">(.+?)</emoji>', r'\1', caption_html)
+
+    # Tüm entity'leri topla
+    all_entities = []
+
+    # Premium emoji entity'lerini ekle
+    for e in emoji_entities:
+        all_entities.append(MessageEntityCustomEmoji(
+            offset=e['offset'],
+            length=e['length'],
+            document_id=e['document_id']
+        ))
+
+    # HTML tag'lerini parse et ve entity'lere dönüştür
+    def parse_html_entities(html_text, clean_text):
+        entities = []
+
+        # Bold <b> veya <strong>
+        for pattern in [r'<b>(.+?)</b>', r'<strong>(.+?)</strong>']:
+            for match in re.finditer(pattern, html_text, re.DOTALL):
+                content = match.group(1)
+                # clean_text içindeki pozisyonu bul
+                pos = clean_text.find(content)
+                if pos != -1:
+                    entities.append(MessageEntityBold(offset=pos, length=len(content)))
+
+        # Italic <i> veya <em>
+        for pattern in [r'<i>(.+?)</i>', r'<em>(.+?)</em>']:
+            for match in re.finditer(pattern, html_text, re.DOTALL):
+                content = match.group(1)
+                pos = clean_text.find(content)
+                if pos != -1:
+                    entities.append(MessageEntityItalic(offset=pos, length=len(content)))
+
+        # Code <code>
+        for match in re.finditer(r'<code>(.+?)</code>', html_text, re.DOTALL):
+            content = match.group(1)
+            pos = clean_text.find(content)
+            if pos != -1:
+                entities.append(MessageEntityCode(offset=pos, length=len(content)))
+
+        # Underline <u>
+        for match in re.finditer(r'<u>(.+?)</u>', html_text, re.DOTALL):
+            content = match.group(1)
+            pos = clean_text.find(content)
+            if pos != -1:
+                entities.append(MessageEntityUnderline(offset=pos, length=len(content)))
+
+        # Strike <s> veya <del>
+        for pattern in [r'<s>(.+?)</s>', r'<del>(.+?)</del>']:
+            for match in re.finditer(pattern, html_text, re.DOTALL):
+                content = match.group(1)
+                pos = clean_text.find(content)
+                if pos != -1:
+                    entities.append(MessageEntityStrike(offset=pos, length=len(content)))
+
+        # Link <a href="url">text</a>
+        for match in re.finditer(r'<a href="([^"]+)">(.+?)</a>', html_text, re.DOTALL):
+            url = match.group(1)
+            content = match.group(2)
+            pos = clean_text.find(content)
+            if pos != -1:
+                entities.append(MessageEntityTextUrl(offset=pos, length=len(content), url=url))
+
+        return entities
+
+    # HTML entity'lerini ekle
+    html_entities = parse_html_entities(html_without_emoji, clean_text)
+    all_entities.extend(html_entities)
+
+    if all_entities:
+        return await client.send_file(
+            chat_id,
+            file=file,
+            caption=clean_text,
+            formatting_entities=all_entities,
+            parse_mode=None
+        )
+    else:
+        # Hiç entity yok, normal gönder
+        return await client.send_file(
+            chat_id,
+            file=file,
+            caption=clean_text,
+            parse_mode=None
+        )
 
 # ═══════════════════════════════════════════════════════════════
 # ORTAM DEĞİŞKENLERİ
@@ -653,12 +819,14 @@ async def bekleyen_islem_handler(event):
 
     if islem == "taslak_ekle":
         taslak_adi = veri
-        taslak_icerik = event.text
+        # Premium emoji'leri koruyarak HTML formatında kaydet
+        taslak_icerik = mesaj_to_html_with_premium(event.message)
 
         if await add_taslak(taslak_adi, taslak_icerik):
             await event.reply(
                 f"✅ Taslak eklendi: <b>{taslak_adi}</b>\n\n"
-                f"<i>Önizleme:</i>\n{taslak_icerik[:200]}...",
+                f"<i>Önizleme:</i>\n{event.text[:200]}...\n\n"
+                f"💎 Premium emoji'ler korundu!",
                 parse_mode="html"
             )
         else:
@@ -666,10 +834,11 @@ async def bekleyen_islem_handler(event):
 
     elif islem == "taslak_duzenle":
         taslak_adi = veri
-        taslak_icerik = event.text
+        # Premium emoji'leri koruyarak HTML formatında kaydet
+        taslak_icerik = mesaj_to_html_with_premium(event.message)
 
         if await update_taslak(taslak_adi, taslak_icerik):
-            await event.reply(f"✅ <b>{taslak_adi}</b> güncellendi.", parse_mode="html")
+            await event.reply(f"✅ <b>{taslak_adi}</b> güncellendi.\n💎 Premium emoji'ler korundu!", parse_mode="html")
         else:
             await event.reply(f"❌ <b>{taslak_adi}</b> bulunamadı.", parse_mode="html")
 
@@ -753,13 +922,13 @@ async def dinleyici(event):
         print("[HATA] ❌ Aktif taslak yok!")
         return
 
-    # Gönder
+    # Gönder (Premium emoji destekli)
     try:
-        await client.send_file(
+        await send_with_premium_emoji(
+            client,
             hedef_id,
             file=foto,
-            caption=taslak_icerik,
-            parse_mode="html"
+            caption_html=taslak_icerik
         )
         print(f"[OK] ✅ Gönderildi | Taslak: {taslak_adi} | {datetime.now().strftime('%H:%M:%S')}")
 
@@ -773,11 +942,11 @@ async def dinleyici(event):
             try:
                 print(f"[INFO] 🔒 Protected içerik indiriliyor...")
                 data = await client.download_media(foto, file=bytes)
-                await client.send_file(
+                await send_with_premium_emoji(
+                    client,
                     hedef_id,
                     file=data,
-                    caption=taslak_icerik,
-                    parse_mode="html"
+                    caption_html=taslak_icerik
                 )
                 print(f"[OK] ✅ Protected çözüldü | {taslak_adi}")
 

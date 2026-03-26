@@ -18,7 +18,9 @@ API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+# Heroku Postgres için URL düzeltmesi (postgres:// -> postgresql://)
+_raw_db_url = os.getenv("DATABASE_URL", "")
+DATABASE_URL = _raw_db_url.replace("postgres://", "postgresql://", 1) if _raw_db_url.startswith("postgres://") else _raw_db_url
 
 # ═══════════════════════════════════════════════════════════════
 # TELEGRAM CLIENT (SESSION STRING)
@@ -45,7 +47,8 @@ async def init_db():
     """Veritabanı bağlantısı ve tabloları oluştur"""
     global db_pool
 
-    db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+    # Heroku Postgres için SSL gerekli
+    db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5, ssl="require")
 
     async with db_pool.acquire() as conn:
         # Tablolar

@@ -2,7 +2,9 @@ import asyncio
 import asyncpg
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Heroku Postgres için URL düzeltmesi (postgres:// -> postgresql://)
+_raw_db_url = os.getenv("DATABASE_URL")
+DATABASE_URL = _raw_db_url.replace("postgres://", "postgresql://", 1) if _raw_db_url and _raw_db_url.startswith("postgres://") else _raw_db_url
 
 SQL = """
 -- Kaynak kanallar (dinlenen kanallar)
@@ -70,7 +72,8 @@ async def main():
     print("\n[*] Veritabanına bağlanılıyor...")
 
     try:
-        conn = await asyncpg.connect(DATABASE_URL)
+        # Heroku Postgres için SSL gerekli
+        conn = await asyncpg.connect(DATABASE_URL, ssl="require")
         print("[✓] Bağlantı başarılı!")
 
         print("\n[*] Tablolar oluşturuluyor...")

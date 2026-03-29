@@ -5,6 +5,7 @@ import re
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument, MessageEntityCustomEmoji
+from copy import deepcopy
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
 from datetime import datetime
@@ -943,8 +944,10 @@ async def dinleyici(event):
         return
 
     # Taslak mesajından caption ve entities al
-    caption = taslak_mesaj.text or ""
-    entities = taslak_mesaj.entities or []
+    # raw_text kullanıyoruz çünkü .text formatlanmış text döndürebilir
+    caption = taslak_mesaj.raw_text or ""
+    # entities'i deepcopy ile kopyalıyoruz - referans sorunlarını önlemek için
+    entities = deepcopy(taslak_mesaj.entities) if taslak_mesaj.entities else None
 
     # Gönder (Premium emoji ve tüm formatlamalar korunur)
     try:
@@ -953,7 +956,7 @@ async def dinleyici(event):
             file=foto,
             caption=caption,
             formatting_entities=entities,
-            parse_mode=None  # Entity'leri doğrudan kullan
+            parse_mode=None  # Entity'leri doğrudan kullan, markdown/html parsing kapalı
         )
         print(f"[OK] ✅ Gönderildi | Taslak: {taslak_adi} | {datetime.now().strftime('%H:%M:%S')}")
 

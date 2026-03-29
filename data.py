@@ -23,11 +23,16 @@ CREATE TABLE IF NOT EXISTS hedef_kanal (
     guncelleme TIMESTAMP DEFAULT NOW()
 );
 
--- Mesaj taslakları (premium emoji destekli)
-CREATE TABLE IF NOT EXISTS taslaklar (
+-- YENİ TASLAK SİSTEMİ (Mesaj Referansı)
+-- Taslak = Mesaj Referansı
+-- Artık taslak içeriği metin olarak değil, mesajın kendisi (chat_id + message_id) olarak saklanıyor
+-- Premium emoji'ler, linkler, bold/italic HER ŞEY korunur!
+-- ⚠️ Taslak mesajını silmeyin, yoksa taslak çalışmaz
+CREATE TABLE IF NOT EXISTS taslaklar_v2 (
     id SERIAL PRIMARY KEY,
     taslak_adi TEXT UNIQUE NOT NULL,
-    taslak_icerik TEXT NOT NULL,
+    source_chat_id BIGINT NOT NULL,
+    source_message_id BIGINT NOT NULL,
     aktif BOOLEAN DEFAULT TRUE,
     sira INTEGER DEFAULT 0,
     eklenen_tarih TIMESTAMP DEFAULT NOW()
@@ -82,23 +87,42 @@ async def main():
         print("[✓] Tablolar başarıyla oluşturuldu:")
         print("    - kaynak_kanallar")
         print("    - hedef_kanal")
-        print("    - taslaklar")
+        print("    - taslaklar_v2 (YENİ - Mesaj Referansı)")
         print("    - yasak_kelimeler")
         print("    - ayarlar")
 
+        print("\n🆕 YENİ TASLAK SİSTEMİ:")
+        print("    • Taslak = Mesaj Referansı")
+        print("    • Premium emoji'ler ✅")
+        print("    • Linkler tıklanabilir ✅")
+        print("    • Bold, italic, underline ✅")
+        print("    • ⚠️ Taslak mesajlarını silmeyin!")
+
         # Mevcut veri sayıları
         kanallar = await conn.fetchval("SELECT COUNT(*) FROM kaynak_kanallar")
-        taslaklar = await conn.fetchval("SELECT COUNT(*) FROM taslaklar")
+
+        # Yeni taslak tablosunu kontrol et
+        try:
+            taslaklar = await conn.fetchval("SELECT COUNT(*) FROM taslaklar_v2")
+        except:
+            taslaklar = 0
+
         yasak = await conn.fetchval("SELECT COUNT(*) FROM yasak_kelimeler")
 
         print(f"\n📊 Mevcut Veriler:")
         print(f"    - Kaynak Kanallar: {kanallar}")
-        print(f"    - Taslaklar: {taslaklar}")
+        print(f"    - Taslaklar (v2): {taslaklar}")
         print(f"    - Yasak Kelimeler: {yasak}")
 
         await conn.close()
         print("\n[✓] Bağlantı kapatıldı.")
         print("\n✅ Kurulum tamamlandı!")
+
+        print("\n" + "="*50)
+        print("👥 ÇOKLU ADMİN DESTEĞİ:")
+        print("    ADMIN_IDS = \"id1,id2,id3\" formatında")
+        print("    Örnek: ADMIN_IDS = \"123456,789012\"")
+        print("="*50)
 
     except Exception as e:
         print(f"\n[HATA] ❌ {e}")

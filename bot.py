@@ -11,179 +11,17 @@ from datetime import datetime
 import asyncpg
 
 # ═══════════════════════════════════════════════════════════════
-# PREMIUM EMOJİ YARDIMCI FONKSİYONLARI
-# ═══════════════════════════════════════════════════════════════
-
-def mesaj_to_html_with_premium(message):
-    """
-    Mesajı premium emoji'ler dahil HTML formatına çevirir.
-    Premium emoji'ler <emoji id="123456">emoji</emoji> formatında saklanır.
-    """
-    if not message.entities:
-        return message.text or ""
-
-    text = message.text or ""
-    entities = sorted(message.entities, key=lambda e: e.offset, reverse=True)
-
-    for entity in entities:
-        start = entity.offset
-        end = entity.offset + entity.length
-        entity_text = text[start:end]
-
-        if isinstance(entity, MessageEntityCustomEmoji):
-            # Premium emoji - özel tag ile sakla
-            replacement = f'<emoji id="{entity.document_id}">{entity_text}</emoji>'
-            text = text[:start] + replacement + text[end:]
-
-    return text
-
-def parse_premium_emoji_html(html_text):
-    """
-    HTML'den premium emoji tag'lerini parse eder.
-    Returns: (clean_text, entities_list)
-    """
-    import re
-
-    entities = []
-    result_text = ""
-    last_end = 0
-
-    pattern = r'<emoji id="(\d+)">(.+?)</emoji>'
-
-    for match in re.finditer(pattern, html_text):
-        # Match'ten önceki normal metni ekle
-        result_text += html_text[last_end:match.start()]
-
-        document_id = int(match.group(1))
-        emoji_text = match.group(2)
-
-        # Entity oluştur
-        entities.append({
-            'type': 'custom_emoji',
-            'offset': len(result_text),
-            'length': len(emoji_text),
-            'document_id': document_id
-        })
-
-        result_text += emoji_text
-        last_end = match.end()
-
-    # Kalan metni ekle
-    result_text += html_text[last_end:]
-
-    return result_text, entities
-
-async def send_with_premium_emoji(client, chat_id, file, caption_html, parse_mode="html"):
-    """
-    Premium emoji'li caption ile dosya gönderir.
-    HTML formatlaması (bold, italic vs.) ve premium emoji'leri birleştirir.
-    """
-    from telethon.tl.types import (
-        MessageEntityCustomEmoji, MessageEntityBold, MessageEntityItalic,
-        MessageEntityCode, MessageEntityPre, MessageEntityTextUrl,
-        MessageEntityUnderline, MessageEntityStrike
-    )
-
-    # Premium emoji tag'lerini parse et
-    clean_text, emoji_entities = parse_premium_emoji_html(caption_html)
-
-    # HTML'deki diğer formatları da parse et
-    # Önce premium emoji tag'lerini kaldır
-    html_without_emoji = re.sub(r'<emoji id="\d+">(.+?)</emoji>', r'\1', caption_html)
-
-    # Tüm entity'leri topla
-    all_entities = []
-
-    # Premium emoji entity'lerini ekle
-    for e in emoji_entities:
-        all_entities.append(MessageEntityCustomEmoji(
-            offset=e['offset'],
-            length=e['length'],
-            document_id=e['document_id']
-        ))
-
-    # HTML tag'lerini parse et ve entity'lere dönüştür
-    def parse_html_entities(html_text, clean_text):
-        entities = []
-
-        # Bold <b> veya <strong>
-        for pattern in [r'<b>(.+?)</b>', r'<strong>(.+?)</strong>']:
-            for match in re.finditer(pattern, html_text, re.DOTALL):
-                content = match.group(1)
-                # clean_text içindeki pozisyonu bul
-                pos = clean_text.find(content)
-                if pos != -1:
-                    entities.append(MessageEntityBold(offset=pos, length=len(content)))
-
-        # Italic <i> veya <em>
-        for pattern in [r'<i>(.+?)</i>', r'<em>(.+?)</em>']:
-            for match in re.finditer(pattern, html_text, re.DOTALL):
-                content = match.group(1)
-                pos = clean_text.find(content)
-                if pos != -1:
-                    entities.append(MessageEntityItalic(offset=pos, length=len(content)))
-
-        # Code <code>
-        for match in re.finditer(r'<code>(.+?)</code>', html_text, re.DOTALL):
-            content = match.group(1)
-            pos = clean_text.find(content)
-            if pos != -1:
-                entities.append(MessageEntityCode(offset=pos, length=len(content)))
-
-        # Underline <u>
-        for match in re.finditer(r'<u>(.+?)</u>', html_text, re.DOTALL):
-            content = match.group(1)
-            pos = clean_text.find(content)
-            if pos != -1:
-                entities.append(MessageEntityUnderline(offset=pos, length=len(content)))
-
-        # Strike <s> veya <del>
-        for pattern in [r'<s>(.+?)</s>', r'<del>(.+?)</del>']:
-            for match in re.finditer(pattern, html_text, re.DOTALL):
-                content = match.group(1)
-                pos = clean_text.find(content)
-                if pos != -1:
-                    entities.append(MessageEntityStrike(offset=pos, length=len(content)))
-
-        # Link <a href="url">text</a>
-        for match in re.finditer(r'<a href="([^"]+)">(.+?)</a>', html_text, re.DOTALL):
-            url = match.group(1)
-            content = match.group(2)
-            pos = clean_text.find(content)
-            if pos != -1:
-                entities.append(MessageEntityTextUrl(offset=pos, length=len(content), url=url))
-
-        return entities
-
-    # HTML entity'lerini ekle
-    html_entities = parse_html_entities(html_without_emoji, clean_text)
-    all_entities.extend(html_entities)
-
-    if all_entities:
-        return await client.send_file(
-            chat_id,
-            file=file,
-            caption=clean_text,
-            formatting_entities=all_entities,
-            parse_mode=None
-        )
-    else:
-        # Hiç entity yok, normal gönder
-        return await client.send_file(
-            chat_id,
-            file=file,
-            caption=clean_text,
-            parse_mode=None
-        )
-
-# ═══════════════════════════════════════════════════════════════
 # ORTAM DEĞİŞKENLERİ
 # ═══════════════════════════════════════════════════════════════
 
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+
+# Çoklu Admin Desteği - virgülle ayrılmış ID'ler (örn: "123456,789012,345678")
+_admin_ids_raw = os.getenv("ADMIN_IDS", os.getenv("ADMIN_ID", "0"))
+ADMIN_IDS = [int(x.strip()) for x in _admin_ids_raw.split(",") if x.strip().isdigit()]
+
 # Heroku Postgres için URL düzeltmesi (postgres:// -> postgresql://)
 _raw_db_url = os.getenv("DATABASE_URL", "")
 DATABASE_URL = _raw_db_url.replace("postgres://", "postgresql://", 1) if _raw_db_url.startswith("postgres://") else _raw_db_url
@@ -203,7 +41,7 @@ bot_aktif = True
 islenen_mesajlar = set()
 foto_cache = set()
 gonderim_sayaci = 0
-bekleyen_islem = {}  # Admin'den beklenen işlemler
+bekleyen_islem = {}  # Admin'den beklenen işlemler (admin_id -> (islem, veri))
 
 # ═══════════════════════════════════════════════════════════════
 # VERİTABANI FONKSİYONLARI
@@ -233,15 +71,6 @@ async def init_db():
                 guncelleme TIMESTAMP DEFAULT NOW()
             );
 
-            CREATE TABLE IF NOT EXISTS taslaklar (
-                id SERIAL PRIMARY KEY,
-                taslak_adi TEXT UNIQUE NOT NULL,
-                taslak_icerik TEXT NOT NULL,
-                aktif BOOLEAN DEFAULT TRUE,
-                sira INTEGER DEFAULT 0,
-                eklenen_tarih TIMESTAMP DEFAULT NOW()
-            );
-
             CREATE TABLE IF NOT EXISTS yasak_kelimeler (
                 id SERIAL PRIMARY KEY,
                 kelime TEXT UNIQUE NOT NULL
@@ -250,6 +79,19 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS ayarlar (
                 anahtar TEXT PRIMARY KEY,
                 deger TEXT NOT NULL
+            );
+        """)
+
+        # Yeni taslak sistemi - mesaj referansı ile
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS taslaklar_v2 (
+                id SERIAL PRIMARY KEY,
+                taslak_adi TEXT UNIQUE NOT NULL,
+                source_chat_id BIGINT NOT NULL,
+                source_message_id BIGINT NOT NULL,
+                aktif BOOLEAN DEFAULT TRUE,
+                sira INTEGER DEFAULT 0,
+                eklenen_tarih TIMESTAMP DEFAULT NOW()
             );
         """)
 
@@ -327,46 +169,74 @@ async def set_hedef_kanal(kanal_id, kanal_adi=""):
             INSERT INTO hedef_kanal (kanal_id, kanal_adi) VALUES ($1, $2)
         """, kanal_id, kanal_adi)
 
+# ═══════════════════════════════════════════════════════════════
+# YENİ TASLAK SİSTEMİ (MESAJ REFERANSI)
+# ═══════════════════════════════════════════════════════════════
+
 async def get_taslaklar(sadece_aktif=False):
-    """Taslakları getir"""
+    """Taslakları getir (yeni sistem)"""
     async with db_pool.acquire() as conn:
         if sadece_aktif:
-            rows = await conn.fetch("SELECT * FROM taslaklar WHERE aktif = TRUE ORDER BY sira, id")
+            rows = await conn.fetch("SELECT * FROM taslaklar_v2 WHERE aktif = TRUE ORDER BY sira, id")
         else:
-            rows = await conn.fetch("SELECT * FROM taslaklar ORDER BY sira, id")
+            rows = await conn.fetch("SELECT * FROM taslaklar_v2 ORDER BY sira, id")
         return rows
 
-async def add_taslak(taslak_adi, taslak_icerik):
-    """Taslak ekle"""
+async def add_taslak(taslak_adi, source_chat_id, source_message_id):
+    """Taslak ekle (mesaj referansı olarak)"""
     async with db_pool.acquire() as conn:
         try:
             await conn.execute("""
-                INSERT INTO taslaklar (taslak_adi, taslak_icerik) VALUES ($1, $2)
-            """, taslak_adi, taslak_icerik)
+                INSERT INTO taslaklar_v2 (taslak_adi, source_chat_id, source_message_id)
+                VALUES ($1, $2, $3)
+            """, taslak_adi, source_chat_id, source_message_id)
             return True
         except:
             return False
 
-async def update_taslak(taslak_adi, taslak_icerik):
+async def update_taslak(taslak_adi, source_chat_id, source_message_id):
     """Taslak güncelle"""
     async with db_pool.acquire() as conn:
         result = await conn.execute("""
-            UPDATE taslaklar SET taslak_icerik = $2 WHERE taslak_adi = $1
-        """, taslak_adi, taslak_icerik)
+            UPDATE taslaklar_v2 SET source_chat_id = $2, source_message_id = $3
+            WHERE taslak_adi = $1
+        """, taslak_adi, source_chat_id, source_message_id)
         return "UPDATE 1" in result
 
 async def delete_taslak(taslak_adi):
     """Taslak sil"""
     async with db_pool.acquire() as conn:
-        result = await conn.execute("DELETE FROM taslaklar WHERE taslak_adi = $1", taslak_adi)
+        result = await conn.execute("DELETE FROM taslaklar_v2 WHERE taslak_adi = $1", taslak_adi)
         return "DELETE 1" in result
 
 async def toggle_taslak(taslak_adi):
     """Taslak aktif/pasif"""
     async with db_pool.acquire() as conn:
         await conn.execute("""
-            UPDATE taslaklar SET aktif = NOT aktif WHERE taslak_adi = $1
+            UPDATE taslaklar_v2 SET aktif = NOT aktif WHERE taslak_adi = $1
         """, taslak_adi)
+
+async def get_taslak_message(taslak):
+    """Taslak mesajını al (orijinal formatıyla)"""
+    try:
+        source_chat_id = taslak['source_chat_id']
+        source_message_id = taslak['source_message_id']
+
+        # Orijinal mesajı al
+        message = await client.get_messages(source_chat_id, ids=source_message_id)
+
+        if message is None:
+            print(f"[HATA] ❌ Taslak mesajı bulunamadı: {taslak['taslak_adi']}")
+            return None
+
+        return message
+    except Exception as e:
+        print(f"[HATA] ❌ Taslak mesajı alınamadı: {e}")
+        return None
+
+# ═══════════════════════════════════════════════════════════════
+# YASAK KELİME FONKSİYONLARI
+# ═══════════════════════════════════════════════════════════════
 
 async def get_yasak_kelimeler():
     """Yasak kelimeleri getir"""
@@ -405,6 +275,10 @@ def extract_photo(msg):
                 if msg.media.document.mime_type.startswith("image/"):
                     return msg.media
     return None
+
+def is_admin(user_id):
+    """Kullanıcının admin olup olmadığını kontrol et"""
+    return user_id in ADMIN_IDS
 
 async def parse_kanal_input(text):
     """Kanal linkini veya ID'sini parse et"""
@@ -478,12 +352,12 @@ async def kanal_katil_ve_id_al(kanal_input):
         return None, f"❌ Hata: {str(e)}"
 
 async def taslak_sec():
-    """Sıradaki taslağı seç"""
+    """Sıradaki taslağı seç ve mesajı getir"""
     global gonderim_sayaci
 
     taslaklar = await get_taslaklar(sadece_aktif=True)
     if not taslaklar:
-        return None, 0
+        return None, None
 
     sistem = await get_ayar("taslak_sistemi", "sira")
     degisim = int(await get_ayar("taslak_degisim", "2"))
@@ -497,7 +371,11 @@ async def taslak_sec():
         taslak = taslaklar[index]
 
     gonderim_sayaci += 1
-    return taslak['taslak_icerik'], taslak['taslak_adi']
+
+    # Taslak mesajını al
+    message = await get_taslak_message(taslak)
+
+    return message, taslak['taslak_adi']
 
 # ═══════════════════════════════════════════════════════════════
 # ADMİN KOMUTLARI
@@ -512,12 +390,20 @@ YARDIM_MESAJI = """
 ├ <code>/pasif</code> - Botu durdur
 └ <code>/yardim</code> - Bu menü
 
-<b>📝 Taslak Yönetimi:</b>
+<b>📝 Taslak Yönetimi (Yeni Sistem):</b>
 ├ <code>/taslak liste</code> - Taslakları listele
-├ <code>/taslak ekle [isim]</code> - Yeni taslak ekle
+├ <code>/taslak ekle [isim]</code> - Yeni taslak ekle (sonra mesaj gönder)
 ├ <code>/taslak sil [isim]</code> - Taslak sil
 ├ <code>/taslak duzenle [isim]</code> - Taslak düzenle
-└ <code>/taslak toggle [isim]</code> - Aktif/Pasif yap
+├ <code>/taslak toggle [isim]</code> - Aktif/Pasif yap
+└ <code>/taslak test [isim]</code> - Taslağı test et
+
+<b>⚠️ Yeni Taslak Sistemi:</b>
+<i>Taslak = Mesaj Referansı
+• /taslak ekle isim yazıp mesajı gönderdiğinizde, mesajın ID'si kaydedilir
+• Gönderim sırasında mesaj orijinal formatıyla kopyalanır
+• Premium emoji, linkler, bold/italic HER ŞEY korunur!
+• ⚠️ Taslak mesajını silmeyin, yoksa taslak çalışmaz!</i>
 
 <b>📡 Kanal Yönetimi:</b>
 ├ <code>/kanal liste</code> - Dinlenen kanallar
@@ -534,6 +420,10 @@ YARDIM_MESAJI = """
 ├ <code>/ayar liste</code> - Tüm ayarları göster
 └ <code>/ayar [anahtar] [deger]</code> - Ayar değiştir
 
+<b>👥 Admin Sistemi:</b>
+<i>Birden fazla admin desteklenir!
+ADMIN_IDS = "id1,id2,id3" formatında</i>
+
 <b>📌 Ayar Anahtarları:</b>
 <code>taslak_sistemi</code> = sira / rastgele
 <code>taslak_degisim</code> = Kaç fotoda taslak değişsin
@@ -543,12 +433,17 @@ YARDIM_MESAJI = """
 <code>ayni_foto_kontrol</code> = true / false
 """
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!](yardim|help|menu|komutlar)$'))
+@client.on(events.NewMessage(pattern=r'^[/!](yardim|help|menu|komutlar)$'))
 async def cmd_yardim(event):
+    if not is_admin(event.sender_id):
+        return
     await event.reply(YARDIM_MESAJI, parse_mode="html")
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]durum$'))
+@client.on(events.NewMessage(pattern=r'^[/!]durum$'))
 async def cmd_durum(event):
+    if not is_admin(event.sender_id):
+        return
+
     hedef_id, hedef_adi = await get_hedef_kanal()
     kanallar = await get_kaynak_kanallar()
     taslaklar = await get_taslaklar(sadece_aktif=True)
@@ -556,11 +451,15 @@ async def cmd_durum(event):
 
     durum = "✅ AKTİF" if bot_aktif else "⏸ DURDURULDU"
 
+    admin_list = ", ".join([f"<code>{a}</code>" for a in ADMIN_IDS])
+
     mesaj = f"""
 <b>📊 Bot Durumu</b>
 
 <b>Durum:</b> {durum}
 <b>Gönderilen:</b> {gonderim_sayaci} foto
+
+<b>👥 Adminler:</b> {admin_list}
 
 <b>📡 Dinlenen Kanallar:</b> {len(kanallar)} adet
 <b>🎯 Hedef Kanal:</b> {hedef_adi or 'Ayarlanmadı'} (<code>{hedef_id or '-'}</code>)
@@ -579,55 +478,80 @@ async def cmd_durum(event):
 """
     await event.reply(mesaj, parse_mode="html")
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!](aktif|start|baslat)$'))
+@client.on(events.NewMessage(pattern=r'^[/!](aktif|start|baslat)$'))
 async def cmd_aktif(event):
+    if not is_admin(event.sender_id):
+        return
     global bot_aktif
     bot_aktif = True
     await event.reply("✅ Bot aktifleştirildi!")
     print(f"[KOMUT] ▶ Bot aktif - {datetime.now().strftime('%H:%M:%S')}")
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!](pasif|stop|dur|durdur)$'))
+@client.on(events.NewMessage(pattern=r'^[/!](pasif|stop|dur|durdur)$'))
 async def cmd_pasif(event):
+    if not is_admin(event.sender_id):
+        return
     global bot_aktif
     bot_aktif = False
     await event.reply("⏸ Bot durduruldu!")
     print(f"[KOMUT] ⏸ Bot pasif - {datetime.now().strftime('%H:%M:%S')}")
 
 # ═══════════════════════════════════════════════════════════════
-# TASLAK KOMUTLARI
+# TASLAK KOMUTLARI (YENİ SİSTEM)
 # ═══════════════════════════════════════════════════════════════
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]taslak liste$'))
+@client.on(events.NewMessage(pattern=r'^[/!]taslak liste$'))
 async def cmd_taslak_liste(event):
+    if not is_admin(event.sender_id):
+        return
+
     taslaklar = await get_taslaklar()
 
     if not taslaklar:
-        await event.reply("📝 Henüz taslak eklenmemiş.\n\nEklemek için: <code>/taslak ekle [isim]</code>", parse_mode="html")
+        await event.reply(
+            "📝 Henüz taslak eklenmemiş.\n\n"
+            "Eklemek için: <code>/taslak ekle [isim]</code>\n"
+            "Sonra taslak mesajını gönderin.",
+            parse_mode="html"
+        )
         return
 
-    mesaj = "<b>📝 Taslak Listesi</b>\n\n"
+    mesaj = "<b>📝 Taslak Listesi (Yeni Sistem)</b>\n\n"
     for i, t in enumerate(taslaklar, 1):
         durum = "✅" if t['aktif'] else "❌"
-        icerik_preview = t['taslak_icerik'][:50].replace('\n', ' ') + "..."
         mesaj += f"{i}. {durum} <b>{t['taslak_adi']}</b>\n"
-        mesaj += f"   <i>{icerik_preview}</i>\n\n"
+        mesaj += f"   📍 Chat: <code>{t['source_chat_id']}</code>\n"
+        mesaj += f"   📩 Mesaj ID: <code>{t['source_message_id']}</code>\n\n"
 
+    mesaj += "\n<i>⚠️ Taslak mesajlarını silmeyin!</i>"
     await event.reply(mesaj, parse_mode="html")
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]taslak ekle (.+)$'))
+@client.on(events.NewMessage(pattern=r'^[/!]taslak ekle (.+)$'))
 async def cmd_taslak_ekle(event):
+    if not is_admin(event.sender_id):
+        return
+
     taslak_adi = event.pattern_match.group(1).strip()
-    bekleyen_islem[ADMIN_ID] = ("taslak_ekle", taslak_adi)
+    bekleyen_islem[event.sender_id] = ("taslak_ekle", taslak_adi)
 
     await event.reply(
-        f"📝 <b>{taslak_adi}</b> için taslak içeriğini gönder.\n\n"
-        "💡 Premium emoji, HTML formatı ve linkler desteklenir.\n"
+        f"📝 <b>{taslak_adi}</b> için taslak mesajını gönder.\n\n"
+        "💡 <b>Yeni Sistem:</b>\n"
+        "• Mesajınız olduğu gibi kaydedilecek\n"
+        "• Premium emoji'ler ✅\n"
+        "• Linkler ✅\n"
+        "• Bold, italic, underline ✅\n"
+        "• Gönderim sırasında mesaj kopyalanacak\n\n"
+        "⚠️ <b>Önemli:</b> Bu mesajı silmeyin!\n\n"
         "İptal için: <code>/iptal</code>",
         parse_mode="html"
     )
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]taslak sil (.+)$'))
+@client.on(events.NewMessage(pattern=r'^[/!]taslak sil (.+)$'))
 async def cmd_taslak_sil(event):
+    if not is_admin(event.sender_id):
+        return
+
     taslak_adi = event.pattern_match.group(1).strip()
 
     if await delete_taslak(taslak_adi):
@@ -635,29 +559,81 @@ async def cmd_taslak_sil(event):
     else:
         await event.reply(f"❌ <b>{taslak_adi}</b> bulunamadı.", parse_mode="html")
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]taslak duzenle (.+)$'))
+@client.on(events.NewMessage(pattern=r'^[/!]taslak duzenle (.+)$'))
 async def cmd_taslak_duzenle(event):
+    if not is_admin(event.sender_id):
+        return
+
     taslak_adi = event.pattern_match.group(1).strip()
-    bekleyen_islem[ADMIN_ID] = ("taslak_duzenle", taslak_adi)
+    bekleyen_islem[event.sender_id] = ("taslak_duzenle", taslak_adi)
 
     await event.reply(
-        f"✏️ <b>{taslak_adi}</b> için yeni içeriği gönder.\n"
+        f"✏️ <b>{taslak_adi}</b> için yeni mesajı gönder.\n\n"
+        "⚠️ Eski mesajı silmeden önce yeni mesajı gönderin!\n\n"
         "İptal için: <code>/iptal</code>",
         parse_mode="html"
     )
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]taslak toggle (.+)$'))
+@client.on(events.NewMessage(pattern=r'^[/!]taslak toggle (.+)$'))
 async def cmd_taslak_toggle(event):
+    if not is_admin(event.sender_id):
+        return
+
     taslak_adi = event.pattern_match.group(1).strip()
     await toggle_taslak(taslak_adi)
     await event.reply(f"🔄 <b>{taslak_adi}</b> durumu değiştirildi.", parse_mode="html")
+
+@client.on(events.NewMessage(pattern=r'^[/!]taslak test (.+)$'))
+async def cmd_taslak_test(event):
+    if not is_admin(event.sender_id):
+        return
+
+    taslak_adi = event.pattern_match.group(1).strip()
+
+    # Taslağı bul
+    taslaklar = await get_taslaklar()
+    taslak = None
+    for t in taslaklar:
+        if t['taslak_adi'] == taslak_adi:
+            taslak = t
+            break
+
+    if not taslak:
+        await event.reply(f"❌ <b>{taslak_adi}</b> bulunamadı.", parse_mode="html")
+        return
+
+    # Mesajı al
+    message = await get_taslak_message(taslak)
+
+    if not message:
+        await event.reply(
+            f"❌ <b>{taslak_adi}</b> taslak mesajı bulunamadı!\n\n"
+            "Mesaj silinmiş olabilir. Lütfen yeniden ekleyin.",
+            parse_mode="html"
+        )
+        return
+
+    # Test için kopyala
+    try:
+        await message.forward_to(event.chat_id)
+        await event.reply(
+            f"✅ <b>{taslak_adi}</b> taslağı yukarıda!\n\n"
+            f"📍 Kaynak: <code>{taslak['source_chat_id']}</code>\n"
+            f"📩 Mesaj ID: <code>{taslak['source_message_id']}</code>",
+            parse_mode="html"
+        )
+    except Exception as e:
+        await event.reply(f"❌ Test hatası: {e}", parse_mode="html")
 
 # ═══════════════════════════════════════════════════════════════
 # KANAL KOMUTLARI
 # ═══════════════════════════════════════════════════════════════
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]kanal liste$'))
+@client.on(events.NewMessage(pattern=r'^[/!]kanal liste$'))
 async def cmd_kanal_liste(event):
+    if not is_admin(event.sender_id):
+        return
+
     kanallar = await get_kaynak_kanallar()
 
     if not kanallar:
@@ -672,8 +648,11 @@ async def cmd_kanal_liste(event):
     mesaj += "\n<i>Silmek için:</i> <code>/kanal sil [ID]</code>"
     await event.reply(mesaj, parse_mode="html")
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]kanal ekle (.+)$'))
+@client.on(events.NewMessage(pattern=r'^[/!]kanal ekle (.+)$'))
 async def cmd_kanal_ekle(event):
+    if not is_admin(event.sender_id):
+        return
+
     kanal_input = event.pattern_match.group(1).strip()
 
     await event.reply("⏳ Kanal ekleniyor...")
@@ -694,8 +673,11 @@ async def cmd_kanal_ekle(event):
     else:
         await event.reply("⚠️ Bu kanal zaten ekli.")
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]kanal sil (.+)$'))
+@client.on(events.NewMessage(pattern=r'^[/!]kanal sil (.+)$'))
 async def cmd_kanal_sil(event):
+    if not is_admin(event.sender_id):
+        return
+
     kanal_input = event.pattern_match.group(1).strip()
 
     try:
@@ -711,8 +693,11 @@ async def cmd_kanal_sil(event):
     else:
         await event.reply("❌ Kanal bulunamadı.")
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]hedef (.+)$'))
+@client.on(events.NewMessage(pattern=r'^[/!]hedef (.+)$'))
 async def cmd_hedef(event):
+    if not is_admin(event.sender_id):
+        return
+
     kanal_input = event.pattern_match.group(1).strip()
 
     await event.reply("⏳ Hedef kanal ayarlanıyor...")
@@ -735,8 +720,11 @@ async def cmd_hedef(event):
 # YASAK KELİME KOMUTLARI
 # ═══════════════════════════════════════════════════════════════
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]yasak liste$'))
+@client.on(events.NewMessage(pattern=r'^[/!]yasak liste$'))
 async def cmd_yasak_liste(event):
+    if not is_admin(event.sender_id):
+        return
+
     kelimeler = await get_yasak_kelimeler()
 
     if not kelimeler:
@@ -748,8 +736,11 @@ async def cmd_yasak_liste(event):
 
     await event.reply(mesaj, parse_mode="html")
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]yasak ekle (.+)$'))
+@client.on(events.NewMessage(pattern=r'^[/!]yasak ekle (.+)$'))
 async def cmd_yasak_ekle(event):
+    if not is_admin(event.sender_id):
+        return
+
     kelime = event.pattern_match.group(1).strip().lower()
 
     if await add_yasak_kelime(kelime):
@@ -757,8 +748,11 @@ async def cmd_yasak_ekle(event):
     else:
         await event.reply("⚠️ Bu kelime zaten ekli.")
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]yasak sil (.+)$'))
+@client.on(events.NewMessage(pattern=r'^[/!]yasak sil (.+)$'))
 async def cmd_yasak_sil(event):
+    if not is_admin(event.sender_id):
+        return
+
     kelime = event.pattern_match.group(1).strip().lower()
 
     if await remove_yasak_kelime(kelime):
@@ -770,8 +764,11 @@ async def cmd_yasak_sil(event):
 # AYAR KOMUTLARI
 # ═══════════════════════════════════════════════════════════════
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]ayar liste$'))
+@client.on(events.NewMessage(pattern=r'^[/!]ayar liste$'))
 async def cmd_ayar_liste(event):
+    if not is_admin(event.sender_id):
+        return
+
     ayarlar = [
         "taslak_sistemi", "taslak_degisim", "gonderim_arasi",
         "flood_bekleme", "yasak_kelime_kontrol", "ayni_foto_kontrol"
@@ -785,8 +782,11 @@ async def cmd_ayar_liste(event):
     mesaj += "\n<i>Değiştirmek için:</i>\n<code>/ayar [anahtar] [değer]</code>"
     await event.reply(mesaj, parse_mode="html")
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]ayar (\S+) (.+)$'))
+@client.on(events.NewMessage(pattern=r'^[/!]ayar (\S+) (.+)$'))
 async def cmd_ayar_degistir(event):
+    if not is_admin(event.sender_id):
+        return
+
     anahtar = event.pattern_match.group(1).strip()
     deger = event.pattern_match.group(2).strip()
 
@@ -797,36 +797,49 @@ async def cmd_ayar_degistir(event):
 # İPTAL VE BEKLEYEN İŞLEM
 # ═══════════════════════════════════════════════════════════════
 
-@client.on(events.NewMessage(from_users=ADMIN_ID, pattern=r'^[/!]iptal$'))
+@client.on(events.NewMessage(pattern=r'^[/!]iptal$'))
 async def cmd_iptal(event):
-    if ADMIN_ID in bekleyen_islem:
-        del bekleyen_islem[ADMIN_ID]
+    if not is_admin(event.sender_id):
+        return
+
+    if event.sender_id in bekleyen_islem:
+        del bekleyen_islem[event.sender_id]
         await event.reply("❌ İşlem iptal edildi.")
     else:
         await event.reply("ℹ️ İptal edilecek işlem yok.")
 
-@client.on(events.NewMessage(from_users=ADMIN_ID))
+@client.on(events.NewMessage())
 async def bekleyen_islem_handler(event):
+    # Admin değilse atla
+    if not is_admin(event.sender_id):
+        return
+
     # Komut değilse ve bekleyen işlem varsa
     if event.text and event.text.startswith(('/', '!')):
         return
 
-    if ADMIN_ID not in bekleyen_islem:
+    if event.sender_id not in bekleyen_islem:
         return
 
-    islem, veri = bekleyen_islem[ADMIN_ID]
-    del bekleyen_islem[ADMIN_ID]
+    islem, veri = bekleyen_islem[event.sender_id]
+    del bekleyen_islem[event.sender_id]
 
     if islem == "taslak_ekle":
         taslak_adi = veri
-        # Premium emoji'leri koruyarak HTML formatında kaydet
-        taslak_icerik = mesaj_to_html_with_premium(event.message)
+        # Mesaj referansını kaydet (chat_id + message_id)
+        source_chat_id = event.chat_id
+        source_message_id = event.id
 
-        if await add_taslak(taslak_adi, taslak_icerik):
+        if await add_taslak(taslak_adi, source_chat_id, source_message_id):
             await event.reply(
                 f"✅ Taslak eklendi: <b>{taslak_adi}</b>\n\n"
-                f"<i>Önizleme:</i>\n{event.text[:200]}...\n\n"
-                f"💎 Premium emoji'ler korundu!",
+                f"📍 Chat ID: <code>{source_chat_id}</code>\n"
+                f"📩 Mesaj ID: <code>{source_message_id}</code>\n\n"
+                f"💎 <b>Yeni Sistem Aktif!</b>\n"
+                f"• Premium emoji'ler ✅\n"
+                f"• Linkler tıklanabilir ✅\n"
+                f"• Tüm formatlamalar korunur ✅\n\n"
+                f"⚠️ <b>Bu mesajı silmeyin!</b>",
                 parse_mode="html"
             )
         else:
@@ -834,11 +847,18 @@ async def bekleyen_islem_handler(event):
 
     elif islem == "taslak_duzenle":
         taslak_adi = veri
-        # Premium emoji'leri koruyarak HTML formatında kaydet
-        taslak_icerik = mesaj_to_html_with_premium(event.message)
+        # Mesaj referansını güncelle
+        source_chat_id = event.chat_id
+        source_message_id = event.id
 
-        if await update_taslak(taslak_adi, taslak_icerik):
-            await event.reply(f"✅ <b>{taslak_adi}</b> güncellendi.\n💎 Premium emoji'ler korundu!", parse_mode="html")
+        if await update_taslak(taslak_adi, source_chat_id, source_message_id):
+            await event.reply(
+                f"✅ <b>{taslak_adi}</b> güncellendi.\n\n"
+                f"📍 Yeni Chat ID: <code>{source_chat_id}</code>\n"
+                f"📩 Yeni Mesaj ID: <code>{source_message_id}</code>\n\n"
+                f"⚠️ <b>Bu mesajı silmeyin!</b>",
+                parse_mode="html"
+            )
         else:
             await event.reply(f"❌ <b>{taslak_adi}</b> bulunamadı.", parse_mode="html")
 
@@ -854,7 +874,7 @@ async def dinleyici(event):
         return
 
     # Admin mesajlarını atla (komut olabilir)
-    if event.sender_id == ADMIN_ID:
+    if is_admin(event.sender_id):
         return
 
     # Özel mesajları atla
@@ -916,19 +936,24 @@ async def dinleyici(event):
         print("[HATA] ❌ Hedef kanal ayarlanmamış!")
         return
 
-    # Taslak seç
-    taslak_icerik, taslak_adi = await taslak_sec()
-    if not taslak_icerik:
-        print("[HATA] ❌ Aktif taslak yok!")
+    # Taslak seç (yeni sistem - mesaj referansı)
+    taslak_mesaj, taslak_adi = await taslak_sec()
+    if not taslak_mesaj:
+        print("[HATA] ❌ Aktif taslak yok veya taslak mesajı bulunamadı!")
         return
 
-    # Gönder (Premium emoji destekli)
+    # Taslak mesajından caption ve entities al
+    caption = taslak_mesaj.text or ""
+    entities = taslak_mesaj.entities or []
+
+    # Gönder (Premium emoji ve tüm formatlamalar korunur)
     try:
-        await send_with_premium_emoji(
-            client,
+        await client.send_file(
             hedef_id,
             file=foto,
-            caption_html=taslak_icerik
+            caption=caption,
+            formatting_entities=entities,
+            parse_mode=None  # Entity'leri doğrudan kullan
         )
         print(f"[OK] ✅ Gönderildi | Taslak: {taslak_adi} | {datetime.now().strftime('%H:%M:%S')}")
 
@@ -942,11 +967,12 @@ async def dinleyici(event):
             try:
                 print(f"[INFO] 🔒 Protected içerik indiriliyor...")
                 data = await client.download_media(foto, file=bytes)
-                await send_with_premium_emoji(
-                    client,
+                await client.send_file(
                     hedef_id,
                     file=data,
-                    caption_html=taslak_icerik
+                    caption=caption,
+                    formatting_entities=entities,
+                    parse_mode=None
                 )
                 print(f"[OK] ✅ Protected çözüldü | {taslak_adi}")
 
@@ -995,7 +1021,7 @@ async def main():
 
     me = await client.get_me()
     print(f"[OK] ✅ Giriş yapıldı: {me.first_name} (@{me.username})")
-    print(f"[OK] ✅ Admin ID: {ADMIN_ID}")
+    print(f"[OK] ✅ Admin ID'ler: {ADMIN_IDS}")
 
     # Bilgi
     kanallar = await get_kaynak_kanallar()
@@ -1006,6 +1032,8 @@ async def main():
     print(f"[INFO] 🎯 Hedef: {hedef_adi or 'Ayarlanmadı'}")
     print(f"[INFO] 📝 Aktif taslak: {len(taslaklar)} adet")
     print(f"\n[INFO] 💬 Admin'e /yardim yaz komutları görmek için")
+    print("\n[INFO] 🆕 YENİ TASLAK SİSTEMİ AKTİF!")
+    print("[INFO] 💎 Premium emoji, link ve formatlamalar korunur")
     print("\n" + "="*60 + "\n")
 
     # Keepalive başlat

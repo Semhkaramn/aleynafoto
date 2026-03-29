@@ -232,6 +232,20 @@ async def get_taslak_message(taslak):
 
         return message
     except Exception as e:
+        # Entity bulunamadı hatası - dialog'ları yenileyip tekrar dene
+        if "Could not find the input entity" in str(e):
+            try:
+                print(f"[INFO] 🔄 Entity cache yenileniyor...")
+                # Dialog'ları yenileyerek entity cache'i güncelle
+                await client.get_dialogs(limit=100)
+                # Tekrar dene
+                message = await client.get_messages(taslak['source_chat_id'], ids=taslak['source_message_id'])
+                if message:
+                    print(f"[OK] ✅ Entity cache yenilendi, mesaj alındı")
+                    return message
+            except Exception as e2:
+                print(f"[HATA] ❌ Entity cache yenileme başarısız: {e2}")
+
         print(f"[HATA] ❌ Taslak mesajı alınamadı: {e}")
         return None
 

@@ -279,17 +279,18 @@ async def remove_yasak_kelime(kelime):
 # ═══════════════════════════════════════════════════════════════
 
 def extract_photo(msg):
-    """Mesajdan fotoğraf çıkart"""
+    """Mesajdan fotoğraf çıkart - (foto, is_document) tuple döndürür"""
     if msg.photo:
-        return msg.photo
+        return (msg.photo, False)
     if msg.media:
         if isinstance(msg.media, MessageMediaPhoto):
-            return msg.media.photo
+            return (msg.media.photo, False)
         if isinstance(msg.media, MessageMediaDocument):
             if hasattr(msg.media.document, 'mime_type'):
                 if msg.media.document.mime_type.startswith("image/"):
-                    return msg.media
-    return None
+                    # Document olarak gelen resim - önizleme sorunu olabilir
+                    return (msg.media, True)
+    return (None, False)
 
 def is_admin(user_id):
     """Kullanıcının admin olup olmadığını kontrol et"""
@@ -914,7 +915,7 @@ async def dinleyici(event):
         islenen_mesajlar.clear()
 
     # Fotoğraf kontrolü
-    foto = extract_photo(event.message)
+    foto, is_document = extract_photo(event.message)
     if not foto:
         return
 
@@ -965,13 +966,27 @@ async def dinleyici(event):
 
     # Gönder (Premium emoji ve tüm formatlamalar korunur)
     try:
-        await client.send_file(
-            hedef_id,
-            file=foto,
-            caption=caption,
-            formatting_entities=entities,
-            parse_mode=None  # Entity'leri doğrudan kullan, markdown/html parsing kapalı
-        )
+        # Document olarak gelen resimleri önce indir, sonra fotoğraf olarak gönder
+        # Bu önizleme sorununun çözümü!
+        if is_document:
+            print(f"[INFO] 📥 Document resim indiriliyor (önizleme için)...")
+            data = await client.download_media(foto, file=bytes)
+            await client.send_file(
+                hedef_id,
+                file=data,
+                caption=caption,
+                formatting_entities=entities,
+                parse_mode=None,
+                force_document=False  # Fotoğraf olarak gönder, önizleme oluşsun
+            )
+        else:
+            await client.send_file(
+                hedef_id,
+                file=foto,
+                caption=caption,
+                formatting_entities=entities,
+                parse_mode=None  # Entity'leri doğrudan kullan, markdown/html parsing kapalı
+            )
         print(f"[OK] ✅ Gönderildi | Taslak: {taslak_adi} | {datetime.now().strftime('%H:%M:%S')}")
 
         gonderim_arasi = int(await get_ayar("gonderim_arasi", "1"))
@@ -989,7 +1004,8 @@ async def dinleyici(event):
                     file=data,
                     caption=caption,
                     formatting_entities=entities,
-                    parse_mode=None
+                    parse_mode=None,
+                    force_document=False  # Fotoğraf olarak gönder
                 )
                 print(f"[OK] ✅ Protected çözüldü | {taslak_adi}")
 
